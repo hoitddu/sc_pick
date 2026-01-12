@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SC2 2:2 MOBILE PICK</title>
+    <style>
+        :root {
+            --primary: #4dabf7; --success: #51cf66; --danger: #ff6b6b; --dark: #121212; --card-bg: #1e1e1e;
+        }
+
+        body {
+            font-family: 'Pretendard', -apple-system, sans-serif; background-color: var(--dark); color: #e0e0e0;
+            margin: 0; padding: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* 입구 (Lobby) UI - 모바일 최적화 */
+        #lobby {
+            display: flex; flex-direction: column; align-items: center; justify-content: center; 
+            padding: 20px; box-sizing: border-box; width: 100%; height: 100vh;
+        }
+
+        .entrance-grid {
+            display: grid; grid-template-columns: 1fr; gap: 15px; width: 100%; max-width: 400px; margin-top: 20px;
+        }
+
+        .entrance-card {
+            background: var(--card-bg); padding: 20px; border-radius: 12px; border: 1px solid #333;
+            text-align: center; cursor: pointer; position: relative;
+        }
+
+        .entrance-card.locked { opacity: 0.5; filter: grayscale(1); cursor: not-allowed; }
+        .entrance-card h3 { margin: 0; font-size: 1.1rem; }
+        .status-tag { display: inline-block; margin-top: 8px; font-size: 0.75rem; padding: 2px 10px; border-radius: 20px; background: #333; }
+        .status-tag.occupied { background: var(--danger); color: white; }
+
+        /* 메인 게임 UI */
+        .container { width: 100%; max-width: 500px; display: none; padding: 15px; box-sizing: border-box; }
+        
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        #round-title { margin: 0; font-size: 1.2rem; color: var(--success); }
+        #user-tag { font-size: 0.8rem; padding: 4px 8px; border-radius: 5px; background: #252525; }
+
+        /* 상단 현황판 */
+        .status-container { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+        .team-card { padding: 12px; border-radius: 10px; background: var(--card-bg); text-align: center; border-bottom: 3px solid #444; }
+        .status-a { border-color: var(--primary); }
+        .status-b { border-color: var(--danger); }
+        .team-label { font-size: 0.75rem; color: #aaa; margin-bottom: 5px; }
+        .pick-value { font-size: 0.95rem; font-weight: bold; margin-top: 5px; height: 1.2rem; }
+
+        /* 종족 선택 그리드 - 모바일에서 터치하기 좋게 */
+        .race-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px; }
+        .race-item { 
+            padding: 18px 10px; background: #2a2a2a; border: 2px solid transparent; border-radius: 8px; 
+            text-align: center; font-size: 0.85rem; transition: 0.1s;
+        }
+        .race-item:active { transform: scale(0.95); }
+        .race-item.selected { border-color: var(--success); background: #1b3d21; font-weight: bold; }
+        .race-item.used { opacity: 0.2; pointer-events: none; text-decoration: line-through; }
+
+        /* 고정 하단 버튼 영역 */
+        .action-area { position: sticky; bottom: 15px; width: 100%; z-index: 100; }
+        .btn-confirm { 
+            background: var(--success); color: white; width: 100%; padding: 16px; 
+            border-radius: 10px; border: none; font-size: 1.1rem; font-weight: bold;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        .btn-confirm:disabled { background: #444; box-shadow: none; }
+
+        /* 히스토리 및 상대 현황 */
+        .history-section { background: #1a1a1a; border-radius: 10px; padding: 12px; margin-top: 20px; font-size: 0.85rem; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th { color: #888; font-weight: normal; padding-bottom: 8px; border-bottom: 1px solid #333; }
+        td { padding: 8px 0; border-bottom: 1px dotted #333; text-align: center; }
+        
+        .rem-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+        .rem-item { padding: 3px 6px; font-size: 0.7rem; background: #252525; border-radius: 4px; color: #777; }
+        .rem-item.used { text-decoration: line-through; opacity: 0.2; }
+
+        .btn-reset { margin-top: 25px; background: none; border: none; color: #555; text-decoration: underline; font-size: 0.75rem; width: 100%; }
+    </style>
+</head>
+<body>
+
+<div id="lobby">
+    <h2 style="margin-bottom: 5px;">SC2 2:2 Tactical</h2>
+    <p style="color: #888; margin-top: 0;">역할을 터치하여 입장하세요</p>
+    <div class="entrance-grid">
+        <div class="entrance-card" id="card-A-Selector" onclick="join('A', 'Selector')">
+            <h3>A팀 선택자</h3>
+            <span class="status-tag" id="tag-A-Selector">접속 가능</span>
+        </div>
+        <div class="entrance-card" id="card-B-Selector" onclick="join('B', 'Selector')">
+            <h3>B팀 선택자</h3>
+            <span class="status-tag" id="tag-B-Selector">접속 가능</span>
+        </div>
+        <div class="entrance-card" id="card-A-Viewer" onclick="join('A', 'Viewer')">
+            <h3>A팀 관전자</h3>
+            <span class="status-tag" id="tag-A-Viewer">접속 가능</span>
+        </div>
+        <div class="entrance-card" id="card-B-Viewer" onclick="join('B', 'Viewer')">
+            <h3>B팀 관전자</h3>
+            <span class="status-tag" id="tag-B-Viewer">접속 가능</span>
+        </div>
+    </div>
+</div>
+
+<div class="container" id="main-container">
+    <header>
+        <h2 id="round-title">RD 1 / 10</h2>
+        <div id="user-tag"></div>
+    </header>
+
+    <div class="status-container">
+        <div class="team-card" id="ui-card-my">
+            <div class="team-label">우리 팀 상태</div>
+            <div id="ui-pick-my" class="pick-value">-</div>
+        </div>
+        <div class="team-card" id="ui-card-opp">
+            <div class="team-label">상대 팀 상태</div>
+            <div id="ui-pick-opp" class="pick-value">대기 중</div>
+        </div>
+    </div>
+
+    <div class="race-grid" id="main-race-grid"></div>
+    
+    <div class="action-area">
+        <button id="btn-confirm" class="btn-confirm" disabled onclick="confirmSelection()">선택 확정</button>
+    </div>
+
+    <div class="history-section">
+        <strong>상대 팀 남은 조합</strong>
+        <div id="opp-rem-list" class="rem-list"></div>
+        
+        <strong style="display: block; margin-top: 15px;">경기 기록</strong>
+        <table>
+            <thead><tr><th>RD</th><th>A팀</th><th>B팀</th></tr></thead>
+            <tbody id="history-body"></tbody>
+        </table>
+    </div>
+
+    <button id="btn-reset" class="btn-reset" style="display:none;" onclick="handleReset()">게임 데이터 초기화</button>
+</div>
+
+<script>
+    const RACES = [
+        { id: 1, label: "저그 + 저그" }, { id: 2, label: "저그 + 토스" },
+        { id: 3, label: "저그 + 테란" }, { id: 4, label: "저그 + 랜덤" },
+        { id: 5, label: "토스 + 토스" }, { id: 6, label: "토스 + 테란" },
+        { id: 7, label: "토스 + 랜덤" }, { id: 8, label: "테란 + 테란" },
+        { id: 9, label: "테란 + 랜덤" }, { id: 10, label: "랜덤 + 랜덤" }
+    ];
+
+    let myTeam, myRole, mySessionKey;
+    let state = { round: 1, aUsed: [], bUsed: [], aPick: null, bPick: null, aDone: false, bDone: false, history: [] };
+
+    const bc = new BroadcastChannel('sc2_mobile_channel');
+
+    function updateLobbyStatus() {
+        ['A-Selector', 'B-Selector', 'A-Viewer', 'B-Viewer'].forEach(key => {
+            const occupier = localStorage.getItem('lock_' + key);
+            const card = document.getElementById('card-' + key);
+            const tag = document.getElementById('tag-' + key);
+            if (occupier) {
+                card.classList.add('locked');
+                tag.innerText = '점유 중';
+                tag.classList.add('occupied');
+            } else {
+                card.classList.remove('locked');
+                tag.innerText = '접속 가능';
+                tag.classList.remove('occupied');
+            }
+        });
+    }
+
+    // 모바일 탭 닫기/변경 대응
+    window.addEventListener('pagehide', () => { if (mySessionKey) localStorage.removeItem(mySessionKey); });
+    window.addEventListener('storage', updateLobbyStatus);
+    setInterval(updateLobbyStatus, 1000);
+
+    function join(team, role) {
+        const key = `${team}-${role}`;
+        if (localStorage.getItem('lock_' + key)) return;
+
+        myTeam = team; myRole = role;
+        mySessionKey = 'lock_' + key;
+        localStorage.setItem(mySessionKey, 'active');
+
+        document.getElementById('lobby').style.display = 'none';
+        document.getElementById('main-container').style.display = 'block';
+        document.getElementById('user-tag').innerText = `${team}팀 ${role === 'Selector' ? '선택자' : '관전자'}`;
+        document.getElementById('user-tag').style.color = team === 'A' ? 'var(--primary)' : 'var(--danger)';
+        
+        if (myRole === 'Selector') document.getElementById('btn-reset').style.display = 'block';
+        initGame();
+    }
+
+    function initGame() {
+        document.getElementById('ui-card-my').classList.add(myTeam === 'A' ? 'status-a' : 'status-b');
+        document.getElementById('ui-card-opp').classList.add(myTeam === 'A' ? 'status-b' : 'status-a');
+        bc.postMessage({ type: 'REQ' });
+        renderGrids();
+        updateUI();
+    }
+
+    bc.onmessage = (e) => {
+        if (e.data.type === 'REQ') bc.postMessage({ type: 'SYNC', state });
+        else { state = e.data.state; updateUI(); }
+    };
+
+    function renderGrids() {
+        const grid = document.getElementById('main-race-grid');
+        grid.innerHTML = '';
+        RACES.forEach(r => {
+            const d = document.createElement('div');
+            d.className = 'race-item';
+            d.id = `race-${r.id}`;
+            d.innerText = r.label;
+            d.onclick = () => {
+                if (myRole !== 'Selector') return;
+                const used = myTeam === 'A' ? state.aUsed : state.bUsed;
+                const done = myTeam === 'A' ? state.aDone : state.bDone;
+                if (!used.includes(r.id) && !done && state.round <= 10) {
+                    if (myTeam === 'A') state.aPick = r; else state.bPick = r;
+                    bc.postMessage({ type: 'SYNC', state });
+                    updateUI();
+                }
+            };
+            grid.appendChild(d);
+        });
+
+        const remList = document.getElementById('opp-rem-list');
+        remList.innerHTML = '';
+        RACES.forEach(r => {
+            const s = document.createElement('span');
+            s.className = 'rem-item';
+            s.id = `rem-${r.id}`;
+            s.innerText = r.label;
+            remList.appendChild(s);
+        });
+    }
+
+    function confirmSelection() {
+        if (myTeam === 'A') state.aDone = true; else state.bDone = true;
+        if (state.aDone && state.bDone) {
+            state.history.push({ r: state.round, a: state.aPick, b: state.bPick });
+            state.aUsed.push(state.aPick.id);
+            state.bUsed.push(state.bPick.id);
+            state.round++;
+            state.aDone = false; state.bDone = false;
+            state.aPick = null; state.bPick = null;
+        }
+        bc.postMessage({ type: 'SYNC', state });
+        updateUI();
+    }
+
+    function handleReset() {
+        if (confirm("전체 데이터를 리셋하시겠습니까?")) {
+            state = { round: 1, aUsed: [], bUsed: [], aPick: null, bPick: null, aDone: false, bDone: false, history: [] };
+            bc.postMessage({ type: 'SYNC', state });
+            updateUI();
+        }
+    }
+
+    function updateUI() {
+        document.getElementById('round-title').innerText = state.round > 10 ? "경기 종료" : `RD ${state.round} / 10`;
+        const myDone = myTeam === 'A' ? state.aDone : state.bDone;
+        const myPick = myTeam === 'A' ? state.aPick : state.bPick;
+        const oppDone = myTeam === 'A' ? state.bDone : state.aDone;
+
+        document.getElementById('ui-pick-my').innerText = myPick ? myPick.label : "-";
+        document.getElementById('ui-pick-my').style.color = myDone ? 'var(--success)' : '#fff';
+        document.getElementById('ui-pick-opp').innerText = oppDone ? "준비완료" : "선택 중";
+        document.getElementById('ui-pick-opp').style.color = oppDone ? 'var(--success)' : '#777';
+
+        const myUsed = myTeam === 'A' ? state.aUsed : state.bUsed;
+        const oppUsed = myTeam === 'A' ? state.bUsed : state.aUsed;
+
+        RACES.forEach(r => {
+            const el = document.getElementById(`race-${r.id}`);
+            if (el) {
+                el.className = 'race-item';
+                if (myUsed.includes(r.id)) el.classList.add('used');
+                if (myPick && myPick.id === r.id) el.classList.add('selected');
+            }
+            const rel = document.getElementById(`rem-${r.id}`);
+            if (rel) rel.className = oppUsed.includes(r.id) ? 'rem-item used' : 'rem-item';
+        });
+
+        document.getElementById('btn-confirm').disabled = (myRole !== 'Selector' || !myPick || myDone || state.round > 10);
+        document.getElementById('btn-confirm').innerText = myDone ? "상대 확정 대기 중..." : "선택 확정";
+        
+        const tbody = document.getElementById('history-body');
+        tbody.innerHTML = '';
+        state.history.slice().reverse().forEach(h => {
+            tbody.innerHTML += `<tr><td>${h.r}</td><td style="color:var(--primary)">${h.a.label}</td><td style="color:var(--danger)">${h.b.label}</td></tr>`;
+        });
+    }
+
+    updateLobbyStatus();
+</script>
+</body>
+</html>
