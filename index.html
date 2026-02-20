@@ -151,6 +151,11 @@
         .btn-save { background: #f0c040; color: #111; width: 100%; padding: 16px; border-radius: 12px; border: none; font-size: 1rem; font-weight: 700; cursor: pointer; }
         .btn-save:disabled { background: #333; color: #666; cursor: default; }
         .save-done-text { font-size: 0.85rem; color: var(--success); font-weight: 600; padding: 8px 0; }
+
+        /* --- DAILY BOARD --- */
+        .score-pos { color: #2ecc71; font-weight: 700; }
+        .score-neg { color: #ff5e5e; font-weight: 700; }
+        .score-zero { color: var(--text-dim); }
     </style>
 </head>
 <body>
@@ -198,7 +203,10 @@
         </div>
     </div>
 
-    <button class="btn-force-reset" onclick="handleReset(true)">
+    <button class="btn-force-reset" style="margin-top:40px;" onclick="showDailyBoard()">
+        📊 일자별 보드 보기
+    </button>
+    <button class="btn-force-reset" style="margin-top:8px;" onclick="handleReset(true)">
         ⚠️ 시스템 강제 초기화 (접속 점유 해제)
     </button>
 </div>
@@ -257,6 +265,28 @@
     </div>
 
     <button onclick="handleReset(false)" style="margin-top:30px; background:none; border:none; color:#444; font-size:0.7rem; width:100%; text-decoration:underline;">경기 데이터 초기화</button>
+</div>
+
+<!-- DAILY BOARD SCREEN -->
+<div class="container" id="daily-board">
+    <header>
+        <button class="btn-home" onclick="hideDailyBoard()">← 뒤로</button>
+        <h2>일자별 보드</h2>
+        <div></div>
+    </header>
+    <div style="display:flex; gap:8px; margin-bottom:16px; align-items:center;">
+        <input type="date" id="board-date-input"
+            style="flex:1; background:#252525; border:1px solid #333; color:#fff; border-radius:8px; padding:8px 12px; font-size:0.85rem; box-sizing:border-box;" />
+        <button onclick="loadDailyBoard()"
+            style="background:#333; border:none; color:#fff; padding:8px 16px; border-radius:8px; cursor:pointer; font-size:0.85rem;">조회</button>
+    </div>
+    <div class="history-section">
+        <div style="font-size:0.8rem; font-weight:700; margin-bottom:8px;" id="board-date-label"></div>
+        <table>
+            <thead><tr><th>이름</th><th>점수</th></tr></thead>
+            <tbody id="board-tbody"></tbody>
+        </table>
+    </div>
 </div>
 
 <script>
@@ -534,9 +564,84 @@
         return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
     }
 
-    function saveSessionCore() {
-        // 3단계에서 구현: matches / statsDaily 저장
-        console.log('[saveSessionCore] lock acquired. matches/statsDaily save to be implemented in stage 3.');
+    function getDateKeyKST() {
+        // Asia/Seoul = UTC+9
+        const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+        const y = kst.getUTCFullYear();
+        const m = String(kst.getUTCMonth() + 1).padStart(2, '0');
+        const d = String(kst.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+    }
+
+    function saveSessionCore(savedState) {
+        // presence에서 4개 슬롯 이름 읽기
+        function slotName(key) {
+            const v = currentPresence[key];
+            return (v && typeof v === 'object' && v.name) ? v.name : null;
+        }
+        const aSelector = slotName('A-Selector');
+        const aViewer   = slotName('A-Viewer');
+        const bSelector = slotName('B-Selector');
+        const bViewer   = slotName('B-Viewer');
+
+        // history 정규화 (Firebase 배열→객체 역직렬화 대비)
+        const toArr = v => Array.isArray(v) ? v : (v ? Object.values(v) : []);
+        const history = toArr(savedState.history);
+
+        // blueWins / redWins 계산
+        let blueWins = 0, redWins = 0;
+        history.forEach(h => {
+            if (h.winner === 'A' || h.aResult === 'W') blueWins++;
+            if (h.winner === 'B' || h.bResult === 'W') redWins++;
+        });
+
+        const diff = Math.abs(blueWins - redWins);
+        const winnerTeam = blueWins > redWins ? 'A' : (redWins > blueWins ? 'B' : 'draw');
+
+        // sessionPoints: 6명 전체 명시 저장
+        // 참가자: 승리팀 +diff / 패배팀 -diff, diff==0 이면 모두 0
+        const sessionPoints = {};
+        MEMBERS.forEach(name => { sessionPoints[name] = 0; });
+
+        function applyPts(name, team) {
+            if (!name || diff === 0) return;
+            sessionPoints[name] = (team === winnerTeam) ? diff : -diff;
+        }
+        applyPts(aSelector, 'A');
+        applyPts(aViewer,   'A');
+        applyPts(bSelector, 'B');
+        applyPts(bViewer,   'B');
+
+        const dateKey   = getDateKeyKST();
+        const sessionId = `${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+
+        const sessionData = {
+            createdAt:    Date.now(),
+            savedAt:      savedState.savedAt || Date.now(),
+            savedByName:  savedState.savedByName || myName,
+            players:      { aSelector, aViewer, bSelector, bViewer },
+            blueWins,
+            redWins,
+            diff,
+            winnerTeam,
+            history,
+            sessionPoints
+        };
+
+        db.ref(`matches/${dateKey}/${sessionId}`).set(sessionData)
+            .then(() => {
+                if (diff === 0) return; // 모두 0점이면 statsDaily 업데이트 생략
+                const txns = [];
+                Object.entries(sessionPoints).forEach(([name, pts]) => {
+                    if (pts === 0) return; // 점수 없는 비참가자 skip
+                    txns.push(
+                        db.ref(`statsDaily/${dateKey}/${name}`)
+                          .transaction(cur => (cur || 0) + pts)
+                    );
+                });
+                return Promise.all(txns);
+            })
+            .catch(showDbError);
     }
 
     function saveSession() {
@@ -557,17 +662,54 @@
                 savedAt: Date.now(),
                 savedByName: myName
             });
-        }, (err, committed) => {
+        }, (err, committed, snap) => {
             if (err) {
                 showDbError(err);
                 if (btnSave) btnSave.disabled = false;
                 return;
             }
             if (committed) {
-                saveSessionCore();
+                saveSessionCore(snap.val());
             } else {
                 alert('이미 다른 참가자가 저장했습니다.');
             }
+        });
+    }
+
+    function showDailyBoard() {
+        document.getElementById('lobby').style.display = 'none';
+        document.getElementById('daily-board').style.display = 'block';
+        const input = document.getElementById('board-date-input');
+        input.value = getDateKeyKST();
+        loadDailyBoard();
+    }
+
+    function hideDailyBoard() {
+        document.getElementById('daily-board').style.display = 'none';
+        document.getElementById('lobby').style.display = 'flex';
+    }
+
+    function loadDailyBoard() {
+        const input = document.getElementById('board-date-input');
+        const dateKey = input.value || getDateKeyKST();
+        document.getElementById('board-date-label').innerText = `${dateKey} 누적 점수`;
+        const tbody = document.getElementById('board-tbody');
+        tbody.innerHTML = '<tr><td colspan="2" style="color:var(--text-dim);">로딩 중...</td></tr>';
+
+        db.ref(`statsDaily/${dateKey}`).once('value').then(snap => {
+            const data = snap.val() || {};
+            tbody.innerHTML = '';
+            // 점수 내림차순 정렬 표시
+            const sorted = MEMBERS.slice().sort((a, b) => (data[b] || 0) - (data[a] || 0));
+            sorted.forEach(name => {
+                const pts = data[name] !== undefined ? data[name] : 0;
+                const cls = pts > 0 ? 'score-pos' : (pts < 0 ? 'score-neg' : 'score-zero');
+                const sign = pts > 0 ? '+' : '';
+                tbody.innerHTML += `<tr><td style="text-align:left; padding-left:16px;">${name}</td><td class="${cls}">${sign}${pts}</td></tr>`;
+            });
+        }).catch(err => {
+            tbody.innerHTML = '<tr><td colspan="2" style="color:#ff5e5e;">로드 실패</td></tr>';
+            console.error(err);
         });
     }
 
