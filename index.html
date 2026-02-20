@@ -336,10 +336,9 @@
     <!-- 비로그인 상태: 로그인 폼 -->
     <div id="admin-login-panel">
         <div class="admin-login-wrap">
-            <div class="admin-title">🔒 관리자 로그인</div>
-            <input class="admin-input" type="email" id="admin-email" placeholder="이메일" autocomplete="off" />
-            <input class="admin-input" type="password" id="admin-password" placeholder="비밀번호" />
-            <button class="btn-admin-login" onclick="adminLogin()">로그인</button>
+            <div class="admin-title">🔒 관리자 PIN 입력</div>
+            <input class="admin-input" type="password" id="admin-pin" placeholder="PIN 번호" autocomplete="off" inputmode="numeric" />
+            <button class="btn-admin-login" onclick="adminLogin()">확인</button>
             <div id="admin-login-error" style="color:#ff5e5e;font-size:0.78rem;margin-top:8px;"></div>
         </div>
     </div>
@@ -384,19 +383,7 @@
 
     // 3. 익명 인증 실행
     let authReady = false;
-    firebase.auth().onAuthStateChanged((user) => {
-        authReady = !!user;
-        // 익명 전환 또는 로그아웃 시 관리자 상태 초기화
-        if (!user || user.isAnonymous) {
-            if (typeof isAdmin !== 'undefined' && isAdmin) {
-                isAdmin = false;
-                const panel     = document.getElementById('admin-panel');
-                const loginPane = document.getElementById('admin-login-panel');
-                if (panel)     panel.style.display = 'none';
-                if (loginPane) loginPane.style.display = 'block';
-            }
-        }
-    });
+    firebase.auth().onAuthStateChanged((user) => { authReady = !!user; });
     firebase.auth().signInAnonymously().catch((e) => {
         console.error("인증실패:", e.message);
         alert(`Firebase 익명 인증 실패: ${e.message}`);
@@ -920,34 +907,27 @@
         document.getElementById('lobby').style.display = 'flex';
     }
 
+    const ADMIN_PIN = '8247';
+
     function adminLogin() {
-        const email = document.getElementById('admin-email').value.trim();
-        const pw    = document.getElementById('admin-password').value;
+        const pin   = document.getElementById('admin-pin').value;
         const errEl = document.getElementById('admin-login-error');
         errEl.innerText = '';
-        if (!email || !pw) { errEl.innerText = '이메일과 비밀번호를 입력하세요.'; return; }
-        firebase.auth().signInWithEmailAndPassword(email, pw)
-            .then(cred => {
-                isAdmin = true;
-                document.getElementById('admin-login-panel').style.display = 'none';
-                document.getElementById('admin-panel').style.display = 'block';
-                document.getElementById('admin-user-info').innerText = `관리자: ${cred.user.email}`;
-                document.getElementById('admin-password').value = '';
-            })
-            .catch(err => { errEl.innerText = `로그인 실패: ${err.message}`; });
+        if (pin !== ADMIN_PIN) { errEl.innerText = 'PIN이 올바르지 않습니다.'; return; }
+        isAdmin = true;
+        document.getElementById('admin-pin').value = '';
+        document.getElementById('admin-login-panel').style.display = 'none';
+        document.getElementById('admin-panel').style.display = 'block';
+        document.getElementById('admin-user-info').innerText = '관리자';
     }
 
     function adminLogout() {
-        firebase.auth().signOut().then(() => {
-            isAdmin = false;
-            firebase.auth().signInAnonymously();
-            document.getElementById('admin-panel').style.display = 'none';
-            document.getElementById('admin-login-panel').style.display = 'block';
-            document.getElementById('admin-email').value = '';
-            document.getElementById('admin-password').value = '';
-            document.getElementById('admin-sessions-list').innerHTML =
-                '<div style="color:var(--text-dim);font-size:0.85rem;">날짜를 선택 후 조회하세요.</div>';
-        });
+        isAdmin = false;
+        document.getElementById('admin-panel').style.display = 'none';
+        document.getElementById('admin-login-panel').style.display = 'block';
+        document.getElementById('admin-pin').value = '';
+        document.getElementById('admin-sessions-list').innerHTML =
+            '<div style="color:var(--text-dim);font-size:0.85rem;">날짜를 선택 후 조회하세요.</div>';
     }
 
     // sessionPoints 재계산 (저장/수정 공통 헬퍼)
