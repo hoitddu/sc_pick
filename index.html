@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SC2 2:2 PICK DASHBOARD</title>
+    
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+    <style>
+        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+
+        :root { 
+            --bg-color: #0f0f0f;
+            --blue-main: #007BFF;
+            --blue-soft: rgba(0, 123, 255, 0.1);
+            --red-main: #FF4B4B;
+            --red-soft: rgba(255, 75, 75, 0.1);
+            --success: #2ecc71;
+            --card-bg: #1a1a1a;
+            --text-main: #ffffff;
+            --text-dim: #a0a0a0;
+        }
+
+        body { 
+            font-family: 'Pretendard', sans-serif; 
+            background-color: var(--bg-color); 
+            color: var(--text-main); 
+            margin: 0; padding: 0; 
+            display: flex; flex-direction: column; align-items: center; 
+            min-height: 100vh; -webkit-tap-highlight-color: transparent;
+        }
+
+        /* --- LOBBY DESIGN --- */
+        #lobby { 
+            display: flex; flex-direction: column; align-items: center; justify-content: center; 
+            width: 100%; max-width: 800px; min-height: 100vh; padding: 20px; box-sizing: border-box;
+        }
+
+        .lobby-header { text-align: center; margin-bottom: 40px; }
+        .lobby-header h1 { font-size: 1.8rem; letter-spacing: -0.5px; margin-bottom: 10px; }
+        .lobby-header p { color: var(--text-dim); font-size: 0.9rem; }
+
+        .dashboard-grid { 
+            display: grid; grid-template-columns: 1fr 1fr; gap: 20px; width: 100%; 
+        }
+
+        @media (max-width: 600px) {
+            .dashboard-grid { grid-template-columns: 1fr; }
+        }
+
+        .team-section { 
+            background: var(--card-bg); border-radius: 20px; padding: 24px; 
+            display: flex; flex-direction: column; gap: 16px; border: 1px solid #2a2a2a;
+        }
+
+        .team-title { font-size: 1.1rem; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+        .blue-title { color: var(--blue-main); }
+        .red-title { color: var(--red-main); }
+
+        .role-card { 
+            position: relative; border-radius: 12px; padding: 20px; cursor: pointer; 
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); border: 1px solid transparent;
+        }
+
+        .role-card.selector { background: #252525; border: 1px solid #333; }
+        .role-card.selector:hover { transform: translateY(-2px); border-color: #444; }
+
+        .blue-active .role-card.selector { background: var(--blue-main); }
+        .red-active .role-card.selector { background: var(--red-main); }
+
+        .role-card.viewer { background: transparent; border: 1px dashed #333; padding: 15px; }
+        .blue-active .role-card.viewer { border-color: var(--blue-main); color: var(--blue-main); }
+        .red-active .role-card.viewer { border-color: var(--red-main); color: var(--red-main); }
+
+        .role-name { font-weight: 600; font-size: 1rem; margin-bottom: 4px; display: block; }
+        
+        .status-badge { font-size: 0.75rem; display: flex; align-items: center; gap: 5px; opacity: 0.8; }
+        .dot { width: 6px; height: 6px; background-color: var(--success); border-radius: 50%; display: inline-block; box-shadow: 0 0 8px var(--success); animation: blink 1.5s infinite; }
+        
+        @keyframes blink { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
+
+        .locked { opacity: 0.2 !important; filter: grayscale(1); pointer-events: none; }
+
+        .btn-force-reset { margin-top: 60px; background: none; border: none; color: #555; font-size: 0.75rem; cursor: pointer; display: flex; align-items: center; gap: 5px; }
+
+        /* --- GAME UI --- */
+        .container { width: 100%; max-width: 500px; display: none; padding: 15px; box-sizing: border-box; }
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .btn-home { background: #252525; color: var(--text-dim); border: 1px solid #333; padding: 8px 16px; border-radius: 8px; font-size: 0.8rem; cursor: pointer; }
+        
+        .status-container { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+        .team-card-ingame { padding: 15px; border-radius: 12px; background: var(--card-bg); text-align: center; border-bottom: 4px solid #333; }
+        
+        .race-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .race-item { padding: 20px 10px; background: #222; border-radius: 10px; text-align: center; border: 2px solid transparent; cursor: pointer; transition: 0.2s; font-size: 0.9rem; }
+        .race-item.selected { border-color: var(--success); background: rgba(46, 204, 113, 0.1); font-weight: bold; }
+        .race-item.used { opacity: 0.15; pointer-events: none; text-decoration: line-through; }
+        
+        .btn-confirm { background: var(--success); color: white; width: 100%; padding: 18px; border-radius: 12px; border: none; font-size: 1.1rem; font-weight: 700; margin-top: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.4); }
+        .btn-confirm:disabled { background: #333; box-shadow: none; color: #666; }
+
+        .history-section { background: var(--card-bg); border-radius: 15px; padding: 15px; margin-top: 30px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.85rem; }
+        th { color: var(--text-dim); font-weight: 400; padding: 10px; border-bottom: 1px solid #333; }
+        td { padding: 12px; text-align: center; border-bottom: 1px solid #252525; }
+        .latest-row { background: rgba(255,255,255,0.03); }
+
+        .rem-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+        .rem-item { padding: 4px 8px; font-size: 0.7rem; background: #252525; border-radius: 5px; color: #666; }
+        .rem-item.used { text-decoration: line-through; opacity: 0.2; }
+    </style>
+</head>
+<body>
+
+<div id="lobby">
+    <div class="lobby-header">
+        <h1>StarCraft 2:2</h1>
+        <p>실시간 밴픽 시스템에 오신 것을 환영합니다.</p>
+    </div>
+    
+    <div class="dashboard-grid">
+        <div class="team-section blue-active">
+            <div class="team-title blue-title">🔵 BLUE TEAM</div>
+            <div class="role-card selector" id="card-A-Selector" onclick="join('Blue', 'Selector')">
+                <span class="role-name">선택자 (Player)</span>
+                <div class="status-badge" id="tag-A-Selector"><span class="dot"></span>접속 가능</div>
+            </div>
+            <div class="role-card viewer" id="card-A-Viewer" onclick="join('Blue', 'Viewer')">
+                <span class="role-name">관전자 (Spectator)</span>
+                <div class="status-badge" id="tag-A-Viewer"><span class="dot"></span>접속 가능</div>
+            </div>
+        </div>
+
+        <div class="team-section red-active">
+            <div class="team-title red-title">🔴 RED TEAM</div>
+            <div class="role-card selector" id="card-B-Selector" onclick="join('Red', 'Selector')">
+                <span class="role-name">선택자 (Player)</span>
+                <div class="status-badge" id="tag-B-Selector"><span class="dot"></span>접속 가능</div>
+            </div>
+            <div class="role-card viewer" id="card-B-Viewer" onclick="join('Red', 'Viewer')">
+                <span class="role-name">관전자 (Spectator)</span>
+                <div class="status-badge" id="tag-B-Viewer"><span class="dot"></span>접속 가능</div>
+            </div>
+        </div>
+    </div>
+
+    <button class="btn-force-reset" onclick="handleReset(true)">
+        ⚠️ 시스템 강제 초기화 (접속 점유 해제)
+    </button>
+</div>
+
+<div class="container" id="main-container">
+    <header>
+        <button class="btn-home" onclick="goHome()">홈화면</button>
+        <h2 id="round-title">RD 1 / 10</h2>
+        <div id="user-tag"></div>
+    </header>
+    
+    <div class="status-container">
+        <div class="team-card-ingame" id="ui-card-my"><div style="font-size:0.7rem; color:var(--text-dim);">우리 팀</div><div id="ui-pick-my" style="font-weight:700;">-</div></div>
+        <div class="team-card-ingame" id="ui-card-opp"><div style="font-size:0.7rem; color:var(--text-dim);">상대 팀</div><div id="ui-pick-opp" style="font-weight:700;">대기 중</div></div>
+    </div>
+
+    <div class="race-grid" id="main-race-grid"></div>
+    <button id="btn-confirm" class="btn-confirm" disabled onclick="confirmSelection()">선택 확정</button>
+
+    <div class="history-section">
+        <div style="font-size:0.8rem; font-weight:700;">상대 남은 조합</div>
+        <div id="opp-rem-list" class="rem-list"></div>
+        
+        <div style="font-size:0.8rem; font-weight:700; margin-top:25px;">History</div>
+        <table>
+            <thead><tr><th>RD</th><th style="color:var(--blue-main)">Blue</th><th style="color:var(--red-main)">Red</th></tr></thead>
+            <tbody id="history-body"></tbody>
+        </table>
+    </div>
+    <button onclick="handleReset(false)" style="margin-top:30px; background:none; border:none; color:#444; font-size:0.7rem; width:100%; text-decoration:underline;">경기 데이터 초기화</button>
+</div>
+
+<script>
+    // 2. Firebase 설정 및 초기화
+    const firebaseConfig = {
+        apiKey: "AIzaSyBAB8mvPNCmL4BHJFq9gDlYktNeA_Ql6m4",
+        authDomain: "scpick-d320f.firebaseapp.com",
+        databaseURL: "https://scpick-d320f-default-rtdb.asia-southeast1.firebasedatabase.app/",
+        projectId: "scpick-d320f",
+        storageBucket: "scpick-d320f.appspot.com",
+        messagingSenderId: "660478793913",
+        appId: "1:660478793913:web:9bc5f9b75d0288128e2368"
+    };
+
+    if (!firebaseConfig.apiKey || firebaseConfig.apiKey === "REPLACE_WITH_NEW_API_KEY") {
+        alert("기존 Firebase API 키를 제거했습니다. 새 키를 발급받아 index.html의 firebaseConfig.apiKey에 넣어주세요.");
+        throw new Error("Firebase apiKey is missing");
+    }
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // 3. 익명 인증 실행
+    firebase.auth().signInAnonymously().catch((e) => console.error("인증실패:", e.message));
+
+    // --- 게임 로직 변수 및 함수 ---
+    const RACES = [
+        { id: 1, label: "저그 + 저그" }, { id: 2, label: "저그 + 토스" },
+        { id: 3, label: "저그 + 테란" }, { id: 4, label: "저그 + 랜덤" },
+        { id: 5, label: "토스 + 토스" }, { id: 6, label: "토스 + 테란" },
+        { id: 7, label: "토스 + 랜덤" }, { id: 8, label: "테란 + 테란" },
+        { id: 9, label: "테란 + 랜덤" }, { id: 10, label: "랜덤 + 랜덤" }
+    ];
+
+    let myTeam, myRole, myId = Math.random().toString(36).substr(2, 9);
+    let gameState = { round: 1, aUsed: [], bUsed: [], aPick: null, bPick: null, aDone: false, bDone: false, history: [] };
+
+    db.ref('presence').on('value', snap => {
+        const pres = snap.val() || {};
+        ['A-Selector', 'B-Selector', 'A-Viewer', 'B-Viewer'].forEach(key => {
+            const card = document.getElementById('card-' + key);
+            const tag = document.getElementById('tag-' + key);
+            if (card && tag) {
+                if (pres[key]) { 
+                    card.classList.add('locked'); 
+                    tag.innerHTML = '점유 중';
+                } else { 
+                    card.classList.remove('locked'); 
+                    tag.innerHTML = '<span class="dot"></span>접속 가능';
+                }
+            }
+        });
+    });
+
+    db.ref('gameState').on('value', snap => { if (snap.exists()) { gameState = snap.val(); updateUI(); } });
+
+    function join(teamColor, role) {
+        myTeam = (teamColor === 'Blue') ? 'A' : 'B';
+        myRole = role;
+        const key = `${myTeam}-${role}`;
+        db.ref('presence/' + key).set(myId);
+        db.ref('presence/' + key).onDisconnect().remove();
+        document.getElementById('lobby').style.display = 'none';
+        document.getElementById('main-container').style.display = 'block';
+        document.getElementById('user-tag').innerText = `${teamColor} ${role}`;
+        document.getElementById('user-tag').style.color = (teamColor === 'Blue') ? 'var(--blue-main)' : 'var(--red-main)';
+        renderGrids();
+    }
+
+    function goHome() {
+        if(confirm("로비로 이동하시겠습니까?")) {
+            const key = `${myTeam}-${myRole}`;
+            db.ref('presence/' + key).remove();
+            location.reload();
+        }
+    }
+
+    function renderGrids() {
+        const grid = document.getElementById('main-race-grid'); grid.innerHTML = '';
+        RACES.forEach(r => {
+            const d = document.createElement('div'); d.className = 'race-item'; d.id = `race-${r.id}`; d.innerText = r.label;
+            d.onclick = () => {
+                if (myRole !== 'Selector') return;
+                const used = myTeam === 'A' ? (gameState.aUsed || []) : (gameState.bUsed || []);
+                const done = myTeam === 'A' ? gameState.aDone : gameState.bDone;
+                if (!used.includes(r.id) && !done && gameState.round <= 10) {
+                    if (myTeam === 'A') gameState.aPick = r; else gameState.bPick = r;
+                    db.ref('gameState').set(gameState);
+                }
+            };
+            grid.appendChild(d);
+        });
+        const remList = document.getElementById('opp-rem-list'); remList.innerHTML = '';
+        RACES.forEach(r => {
+            const s = document.createElement('span'); s.className = 'rem-item'; s.id = `rem-${r.id}`; s.innerText = r.label; remList.appendChild(s);
+        });
+    }
+
+    function confirmSelection() {
+        if (myTeam === 'A') gameState.aDone = true; else gameState.bDone = true;
+        if (gameState.aDone && gameState.bDone) {
+            if (!gameState.history) gameState.history = [];
+            if (!gameState.aUsed) gameState.aUsed = [];
+            if (!gameState.bUsed) gameState.bUsed = [];
+            gameState.history.push({ r: gameState.round, a: gameState.aPick, b: gameState.bPick });
+            gameState.aUsed.push(gameState.aPick.id);
+            gameState.bUsed.push(gameState.bPick.id);
+            gameState.round++;
+            gameState.aDone = false; gameState.bDone = false;
+            gameState.aPick = null; gameState.bPick = null;
+        }
+        db.ref('gameState').set(gameState);
+    }
+
+    function handleReset(isForce) {
+        if (confirm(isForce ? "시스템을 강제 초기화할까요?" : "데이터를 초기화할까요?")) {
+            db.ref('gameState').set({ round: 1, aUsed: [], bUsed: [], aPick: null, bPick: null, aDone: false, bDone: false, history: [] });
+            if (isForce) db.ref('presence').remove().then(() => { location.reload(); });
+        }
+    }
+
+    function updateUI() {
+        document.getElementById('round-title').innerText = gameState.round > 10 ? "Draft Ended" : `ROUND ${gameState.round} / 10`;
+        const myDone = myTeam === 'A' ? gameState.aDone : gameState.bDone;
+        const myPick = myTeam === 'A' ? gameState.aPick : gameState.bPick;
+        const oppDone = myTeam === 'A' ? gameState.bDone : gameState.aDone;
+        document.getElementById('ui-pick-my').innerText = myPick ? myPick.label : "-";
+        document.getElementById('ui-pick-opp').innerText = oppDone ? "Ready" : "Selecting...";
+        
+        const myUsed = myTeam === 'A' ? (gameState.aUsed || []) : (gameState.bUsed || []);
+        const oppUsed = myTeam === 'A' ? (gameState.bUsed || []) : (gameState.aUsed || []);
+
+        RACES.forEach(r => {
+            const el = document.getElementById(`race-${r.id}`);
+            if (el) {
+                el.className = 'race-item';
+                if (myUsed.includes(r.id)) el.classList.add('used');
+                if (myPick && myPick.id === r.id) el.classList.add('selected');
+            }
+            const rel = document.getElementById(`rem-${r.id}`);
+            if (rel) rel.className = oppUsed.includes(r.id) ? 'rem-item used' : 'rem-item';
+        });
+
+        document.getElementById('btn-confirm').disabled = (myRole !== 'Selector' || !myPick || myDone || gameState.round > 10);
+        
+        const tbody = document.getElementById('history-body'); tbody.innerHTML = '';
+        if (gameState.history) {
+            const sortedHistory = gameState.history.slice().reverse();
+            sortedHistory.forEach((h, index) => {
+                const rowClass = index === 0 ? 'class="latest-row"' : '';
+                tbody.innerHTML += `<tr ${rowClass}><td>${h.r}</td><td style="color:var(--blue-main)">${h.a.label}</td><td style="color:var(--red-main)">${h.b.label}</td></tr>`;
+            });
+        }
+    }
+</script>
+</body>
+</html>

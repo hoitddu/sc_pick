@@ -1,0 +1,14 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+    "presence": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "gameState": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    }
+  }
+}
