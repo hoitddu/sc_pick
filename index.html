@@ -158,6 +158,24 @@
         .score-zero { color: var(--text-dim); }
         .board-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
         @media (max-width: 480px) { .board-grid { grid-template-columns: 1fr; } }
+
+        /* --- ADMIN PANEL --- */
+        .admin-login-wrap { max-width: 360px; margin: 40px auto; background: var(--card-bg); border-radius: 16px; padding: 28px 24px; border: 1px solid #2a2a2a; }
+        .admin-title { font-size: 1rem; font-weight: 700; margin-bottom: 16px; color: var(--text-dim); }
+        .admin-input { width: 100%; background: #252525; border: 1px solid #333; color: #fff; border-radius: 8px; padding: 10px 12px; font-size: 0.9rem; box-sizing: border-box; margin-bottom: 10px; outline: none; }
+        .admin-input:focus { border-color: #555; }
+        .btn-admin-login { background: #f0c040; color: #111; width: 100%; padding: 12px; border-radius: 10px; border: none; font-size: 0.95rem; font-weight: 700; cursor: pointer; margin-top: 4px; }
+        .admin-bar { display: flex; justify-content: space-between; align-items: center; padding: 10px 0 18px; border-bottom: 1px solid #222; margin-bottom: 18px; }
+        .admin-user-info { font-size: 0.8rem; color: var(--text-dim); }
+        .btn-admin-logout { background: none; border: 1px solid #333; color: #aaa; font-size: 0.75rem; padding: 5px 12px; border-radius: 6px; cursor: pointer; }
+        .session-card { background: #1e1e1e; border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; border: 1px solid #2a2a2a; }
+        .session-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .session-card-actions { display: flex; gap: 6px; margin-top: 10px; }
+        .btn-admin-edit { background: #2255cc; color: #fff; border: none; border-radius: 6px; padding: 5px 12px; font-size: 0.78rem; cursor: pointer; }
+        .btn-admin-delete { background: #aa2222; color: #fff; border: none; border-radius: 6px; padding: 5px 12px; font-size: 0.78rem; cursor: pointer; }
+        .edit-form { background: #252525; border-radius: 8px; padding: 10px; margin-top: 8px; display: none; }
+        .edit-form input[type=number] { width: 60px; background: #333; border: 1px solid #444; color: #fff; border-radius: 6px; padding: 4px 8px; font-size: 0.85rem; text-align: center; }
+        .btn-edit-save { background: var(--success); color: #111; border: none; border-radius: 6px; padding: 5px 12px; font-size: 0.78rem; font-weight: 700; cursor: pointer; margin-left: 8px; }
     </style>
 </head>
 <body>
@@ -210,6 +228,9 @@
     </button>
     <button class="btn-force-reset" style="margin-top:8px;" onclick="handleReset(true)">
         ⚠️ 시스템 강제 초기화 (접속 점유 해제)
+    </button>
+    <button class="btn-force-reset" style="margin-top:8px;" onclick="showAdminScreen()">
+        🔒 관리자 모드
     </button>
 </div>
 
@@ -304,6 +325,43 @@
     </div>
 </div>
 
+<!-- ADMIN SCREEN -->
+<div class="container" id="admin-screen">
+    <header>
+        <button class="btn-home" onclick="hideAdminScreen()">← 뒤로</button>
+        <h2>관리자 모드</h2>
+        <div></div>
+    </header>
+
+    <!-- 비로그인 상태: 로그인 폼 -->
+    <div id="admin-login-panel">
+        <div class="admin-login-wrap">
+            <div class="admin-title">🔒 관리자 로그인</div>
+            <input class="admin-input" type="email" id="admin-email" placeholder="이메일" autocomplete="off" />
+            <input class="admin-input" type="password" id="admin-password" placeholder="비밀번호" />
+            <button class="btn-admin-login" onclick="adminLogin()">로그인</button>
+            <div id="admin-login-error" style="color:#ff5e5e;font-size:0.78rem;margin-top:8px;"></div>
+        </div>
+    </div>
+
+    <!-- 로그인 상태: 관리자 패널 -->
+    <div id="admin-panel" style="display:none;">
+        <div class="admin-bar">
+            <div class="admin-user-info" id="admin-user-info">관리자: -</div>
+            <button class="btn-admin-logout" onclick="adminLogout()">로그아웃</button>
+        </div>
+        <div style="display:flex; gap:8px; margin-bottom:16px; align-items:center;">
+            <input type="date" id="admin-date-input"
+                style="flex:1; background:#252525; border:1px solid #333; color:#fff; border-radius:8px; padding:8px 12px; font-size:0.85rem; box-sizing:border-box;" />
+            <button onclick="adminLoadSessions()"
+                style="background:#333; border:none; color:#fff; padding:8px 16px; border-radius:8px; cursor:pointer; font-size:0.85rem;">조회</button>
+        </div>
+        <div id="admin-sessions-list">
+            <div style="color:var(--text-dim);font-size:0.85rem;">날짜를 선택 후 조회하세요.</div>
+        </div>
+    </div>
+</div>
+
 <script>
     // 2. Firebase 설정 및 초기화
     const firebaseConfig = {
@@ -326,7 +384,19 @@
 
     // 3. 익명 인증 실행
     let authReady = false;
-    firebase.auth().onAuthStateChanged((user) => { authReady = !!user; });
+    firebase.auth().onAuthStateChanged((user) => {
+        authReady = !!user;
+        // 익명 전환 또는 로그아웃 시 관리자 상태 초기화
+        if (!user || user.isAnonymous) {
+            if (typeof isAdmin !== 'undefined' && isAdmin) {
+                isAdmin = false;
+                const panel     = document.getElementById('admin-panel');
+                const loginPane = document.getElementById('admin-login-panel');
+                if (panel)     panel.style.display = 'none';
+                if (loginPane) loginPane.style.display = 'block';
+            }
+        }
+    });
     firebase.auth().signInAnonymously().catch((e) => {
         console.error("인증실패:", e.message);
         alert(`Firebase 익명 인증 실패: ${e.message}`);
@@ -827,6 +897,217 @@
             renderMatchList(matchVal, yearMonth);
         });
     }
+
+    // ── ADMIN MODE ──────────────────────────────────────────────────────────
+
+    let isAdmin = false;
+
+    function showAdminScreen() {
+        document.getElementById('lobby').style.display = 'none';
+        document.getElementById('admin-screen').style.display = 'block';
+        // 오늘 날짜(KST) 기본 세팅
+        const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+        const y = kst.getUTCFullYear();
+        const m = String(kst.getUTCMonth() + 1).padStart(2, '0');
+        const d = String(kst.getUTCDate()).padStart(2, '0');
+        document.getElementById('admin-date-input').value = `${y}-${m}-${d}`;
+        document.getElementById('admin-login-panel').style.display = isAdmin ? 'none' : 'block';
+        document.getElementById('admin-panel').style.display       = isAdmin ? 'block' : 'none';
+    }
+
+    function hideAdminScreen() {
+        document.getElementById('admin-screen').style.display = 'none';
+        document.getElementById('lobby').style.display = 'flex';
+    }
+
+    function adminLogin() {
+        const email = document.getElementById('admin-email').value.trim();
+        const pw    = document.getElementById('admin-password').value;
+        const errEl = document.getElementById('admin-login-error');
+        errEl.innerText = '';
+        if (!email || !pw) { errEl.innerText = '이메일과 비밀번호를 입력하세요.'; return; }
+        firebase.auth().signInWithEmailAndPassword(email, pw)
+            .then(cred => {
+                isAdmin = true;
+                document.getElementById('admin-login-panel').style.display = 'none';
+                document.getElementById('admin-panel').style.display = 'block';
+                document.getElementById('admin-user-info').innerText = `관리자: ${cred.user.email}`;
+                document.getElementById('admin-password').value = '';
+            })
+            .catch(err => { errEl.innerText = `로그인 실패: ${err.message}`; });
+    }
+
+    function adminLogout() {
+        firebase.auth().signOut().then(() => {
+            isAdmin = false;
+            firebase.auth().signInAnonymously();
+            document.getElementById('admin-panel').style.display = 'none';
+            document.getElementById('admin-login-panel').style.display = 'block';
+            document.getElementById('admin-email').value = '';
+            document.getElementById('admin-password').value = '';
+            document.getElementById('admin-sessions-list').innerHTML =
+                '<div style="color:var(--text-dim);font-size:0.85rem;">날짜를 선택 후 조회하세요.</div>';
+        });
+    }
+
+    // sessionPoints 재계산 (저장/수정 공통 헬퍼)
+    function computeSessionPoints(players, blueWins, redWins) {
+        const diff = Math.abs(blueWins - redWins);
+        const winnerTeam = blueWins > redWins ? 'A' : (redWins > blueWins ? 'B' : 'draw');
+        const pts = {};
+        MEMBERS.forEach(n => { pts[n] = 0; });
+        function apply(name, team) {
+            if (!name || diff === 0) return;
+            pts[name] = (team === winnerTeam) ? diff : -diff;
+        }
+        apply(players.aSelector, 'A');
+        apply(players.aViewer,   'A');
+        apply(players.bSelector, 'B');
+        apply(players.bViewer,   'B');
+        return pts;
+    }
+
+    function adminLoadSessions() {
+        const dateKey = document.getElementById('admin-date-input').value;
+        if (!dateKey) return;
+        const listEl = document.getElementById('admin-sessions-list');
+        listEl.innerHTML = '<div style="color:var(--text-dim);font-size:0.85rem;">로딩 중...</div>';
+        db.ref(`matches/${dateKey}`).once('value')
+            .then(snap => {
+                const val = snap.val();
+                if (!val || typeof val !== 'object' || Object.keys(val).length === 0) {
+                    listEl.innerHTML = '<div style="color:var(--text-dim);font-size:0.85rem;">이 날짜에 저장된 세션이 없습니다.</div>';
+                    return;
+                }
+                listEl.innerHTML = '';
+                Object.entries(val)
+                    .sort(([, a], [, b]) => (a.createdAt || 0) - (b.createdAt || 0))
+                    .forEach(([sessionId, s]) => {
+                        if (!s || typeof s !== 'object') return;
+                        const aS = (s.players && s.players.aSelector) || '-';
+                        const aV = (s.players && s.players.aViewer)   || '-';
+                        const bS = (s.players && s.players.bSelector) || '-';
+                        const bV = (s.players && s.players.bViewer)   || '-';
+                        const bw = s.blueWins !== undefined ? s.blueWins : '?';
+                        const rw = s.redWins  !== undefined ? s.redWins  : '?';
+                        const timeStr = s.createdAt ? formatTimestamp(s.createdAt) : '';
+                        const winTag = s.winnerTeam === 'A'
+                            ? `<span style="color:var(--blue-main);font-weight:700;">BLUE WIN</span>`
+                            : s.winnerTeam === 'B'
+                            ? `<span style="color:var(--red-main);font-weight:700;">RED WIN</span>`
+                            : `<span style="color:var(--text-dim);">DRAW</span>`;
+                        const card = document.createElement('div');
+                        card.className = 'session-card';
+                        card.id = `scard-${sessionId}`;
+                        // escaping sessionId is safe: it's a timestamp+random string
+                        card.innerHTML = `
+                            <div class="session-card-header">
+                                <span style="color:var(--text-dim);font-size:0.78rem;">${timeStr}</span>${winTag}
+                            </div>
+                            <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;text-align:center;margin-bottom:6px;">
+                                <div>
+                                    <div style="color:var(--blue-main);font-weight:600;font-size:0.85rem;">${aS}</div>
+                                    <div style="color:var(--blue-main);opacity:0.6;font-size:0.72rem;">${aV}</div>
+                                </div>
+                                <div style="font-weight:800;font-size:1.1rem;">${bw}:${rw}</div>
+                                <div>
+                                    <div style="color:var(--red-main);font-weight:600;font-size:0.85rem;">${bS}</div>
+                                    <div style="color:var(--red-main);opacity:0.6;font-size:0.72rem;">${bV}</div>
+                                </div>
+                            </div>
+                            <div class="session-card-actions">
+                                <button class="btn-admin-edit" onclick="toggleEditForm('${sessionId}')">수정</button>
+                                <button class="btn-admin-delete" onclick="adminDeleteSession('${dateKey}','${sessionId}')">삭제</button>
+                            </div>
+                            <div class="edit-form" id="editform-${sessionId}">
+                                <div style="font-size:0.78rem;color:var(--text-dim);margin-bottom:8px;">새 점수 입력 (Blue : Red)</div>
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <span style="color:var(--blue-main);font-size:0.8rem;">Blue</span>
+                                    <input type="number" id="edit-blue-${sessionId}" value="${bw}" min="0" max="10" />
+                                    <span style="font-size:0.8rem;">:</span>
+                                    <input type="number" id="edit-red-${sessionId}" value="${rw}" min="0" max="10" />
+                                    <span style="color:var(--red-main);font-size:0.8rem;">Red</span>
+                                    <button class="btn-edit-save" onclick="adminEditSession('${dateKey}','${sessionId}')">저장</button>
+                                </div>
+                            </div>
+                        `;
+                        listEl.appendChild(card);
+                    });
+            })
+            .catch(err => {
+                listEl.innerHTML = `<div style="color:#ff5e5e;font-size:0.8rem;">로드 실패: ${err.message}</div>`;
+            });
+    }
+
+    function toggleEditForm(sessionId) {
+        const form = document.getElementById(`editform-${sessionId}`);
+        if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
+    }
+
+    function adminEditSession(dateKey, sessionId) {
+        const newBlue = parseInt(document.getElementById(`edit-blue-${sessionId}`).value, 10);
+        const newRed  = parseInt(document.getElementById(`edit-red-${sessionId}`).value,  10);
+        if (isNaN(newBlue) || isNaN(newRed) || newBlue < 0 || newRed < 0) {
+            alert('올바른 점수를 입력하세요.'); return;
+        }
+        db.ref(`matches/${dateKey}/${sessionId}`).once('value').then(snap => {
+            const s = snap.val();
+            if (!s) { alert('세션을 찾을 수 없습니다.'); return Promise.reject('not found'); }
+            const oldPts = s.sessionPoints || {};
+            const newPts = computeSessionPoints(s.players || {}, newBlue, newRed);
+            return db.ref(`matches/${dateKey}/${sessionId}`).update({
+                blueWins:      newBlue,
+                redWins:       newRed,
+                diff:          Math.abs(newBlue - newRed),
+                winnerTeam:    newBlue > newRed ? 'A' : (newRed > newBlue ? 'B' : 'draw'),
+                sessionPoints: newPts
+            }).then(() => {
+                const txns = [];
+                MEMBERS.forEach(name => {
+                    const delta = (newPts[name] || 0) - (oldPts[name] || 0);
+                    if (delta === 0) return;
+                    txns.push(
+                        db.ref(`statsDaily/${dateKey}/${name}`)
+                          .transaction(cur => (cur || 0) + delta)
+                    );
+                });
+                return Promise.all(txns);
+            });
+        }).then(() => {
+            alert('수정 완료');
+            adminLoadSessions();
+        }).catch(err => {
+            if (err !== 'not found') alert(`수정 실패: ${err.message || err}`);
+        });
+    }
+
+    function adminDeleteSession(dateKey, sessionId) {
+        if (!confirm('이 세션을 삭제하고 점수를 롤백할까요?')) return;
+        db.ref(`matches/${dateKey}/${sessionId}`).once('value').then(snap => {
+            const s = snap.val();
+            if (!s) { alert('세션을 찾을 수 없습니다.'); return Promise.reject('not found'); }
+            const oldPts = s.sessionPoints || {};
+            return db.ref(`matches/${dateKey}/${sessionId}`).remove().then(() => {
+                const txns = [];
+                MEMBERS.forEach(name => {
+                    const pts = oldPts[name] || 0;
+                    if (pts === 0) return;
+                    txns.push(
+                        db.ref(`statsDaily/${dateKey}/${name}`)
+                          .transaction(cur => (cur || 0) - pts)
+                    );
+                });
+                return Promise.all(txns);
+            });
+        }).then(() => {
+            alert('삭제 완료');
+            adminLoadSessions();
+        }).catch(err => {
+            if (err !== 'not found') alert(`삭제 실패: ${err.message || err}`);
+        });
+    }
+
+    // ── END ADMIN MODE ───────────────────────────────────────────────────────
 
     function handleReset(isForce) {
         if (confirm(isForce ? "시스템을 강제 초기화할까요?" : "데이터를 초기화할까요?")) {
