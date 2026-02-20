@@ -133,6 +133,17 @@
         .rem-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
         .rem-item { padding: 4px 8px; font-size: 0.7rem; background: #252525; border-radius: 5px; color: #666; }
         .rem-item.used { text-decoration: line-through; opacity: 0.2; }
+
+        /* --- NAME SELECTOR --- */
+        .name-selector-wrap { width: 100%; margin-bottom: 24px; background: var(--card-bg); border-radius: 16px; padding: 20px 24px; box-sizing: border-box; border: 1px solid #2a2a2a; }
+        .name-selector-label { font-size: 0.8rem; color: var(--text-dim); margin-bottom: 10px; }
+        .name-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+        .name-chip { padding: 8px 16px; border-radius: 999px; border: 1px solid #333; background: #252525; color: var(--text-dim); font-size: 0.85rem; cursor: pointer; transition: 0.15s; }
+        .name-chip:hover { border-color: #555; }
+        .name-chip.selected { background: var(--blue-main); border-color: var(--blue-main); color: #fff; font-weight: 700; }
+        .name-chosen-row { display: flex; align-items: center; gap: 10px; font-size: 0.85rem; margin-bottom: 24px; }
+        .name-chosen-val { font-weight: 700; color: var(--text-main); }
+        .btn-name-change { background: none; border: 1px solid #333; color: var(--text-dim); font-size: 0.75rem; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
     </style>
 </head>
 <body>
@@ -143,6 +154,17 @@
         <p>실시간 밴픽 시스템에 오신 것을 환영합니다.</p>
     </div>
     
+    <!-- NAME SELECTOR -->
+    <div class="name-selector-wrap" id="name-selector-wrap">
+        <div class="name-selector-label">내 이름을 선택하세요</div>
+        <div class="name-chips" id="name-chips"></div>
+    </div>
+    <div class="name-chosen-row" id="name-chosen-row" style="display:none;">
+        <span style="font-size:0.8rem; color:var(--text-dim);">선택된 이름:</span>
+        <span class="name-chosen-val" id="name-chosen-val"></span>
+        <button class="btn-name-change" onclick="resetNameSelection()">변경</button>
+    </div>
+
     <div class="dashboard-grid">
         <div class="team-section blue-active">
             <div class="team-title blue-title">🔵 BLUE TEAM</div>
@@ -273,6 +295,46 @@
     ];
 
     let myTeam, myRole, myId = Math.random().toString(36).substr(2, 9);
+
+    const MEMBERS = ['수해', '성옥', '진수', '윤우', '유강', '동주'];
+    let myName = localStorage.getItem('sc2_name') || '';
+
+    function initNameUI() {
+        const chips = document.getElementById('name-chips');
+        chips.innerHTML = '';
+        MEMBERS.forEach(name => {
+            const chip = document.createElement('div');
+            chip.className = 'name-chip' + (myName === name ? ' selected' : '');
+            chip.innerText = name;
+            chip.onclick = () => selectName(name);
+            chips.appendChild(chip);
+        });
+        const wrapEl = document.getElementById('name-selector-wrap');
+        const chosenRow = document.getElementById('name-chosen-row');
+        const chosenVal = document.getElementById('name-chosen-val');
+        if (myName) {
+            wrapEl.style.display = 'none';
+            chosenRow.style.display = 'flex';
+            chosenVal.innerText = myName;
+        } else {
+            wrapEl.style.display = 'block';
+            chosenRow.style.display = 'none';
+        }
+    }
+
+    function selectName(name) {
+        myName = name;
+        localStorage.setItem('sc2_name', name);
+        initNameUI();
+    }
+
+    function resetNameSelection() {
+        myName = '';
+        localStorage.removeItem('sc2_name');
+        initNameUI();
+    }
+
+    initNameUI();
     const createInitialState = () => ({
         round: 1,
         aUsed: [],
@@ -310,11 +372,13 @@
             const card = document.getElementById('card-' + key);
             const tag = document.getElementById('tag-' + key);
             if (card && tag) {
-                if (pres[key]) { 
-                    card.classList.add('locked'); 
-                    tag.innerHTML = '점유 중';
-                } else { 
-                    card.classList.remove('locked'); 
+                if (pres[key]) {
+                    const occupantName = (typeof pres[key] === 'object' && pres[key].name)
+                        ? pres[key].name : '점유됨';
+                    card.classList.add('locked');
+                    tag.innerHTML = `점유 중 (${occupantName})`;
+                } else {
+                    card.classList.remove('locked');
                     tag.innerHTML = '<span class="dot"></span>접속 가능';
                 }
             }
@@ -324,15 +388,16 @@
     db.ref('gameState').on('value', snap => { if (snap.exists()) { gameState = normalizeGameState(snap.val()); updateUI(); } });
 
     function join(teamColor, role) {
+        if (!myName) { alert('이름을 먼저 선택해주세요.'); return; }
         if (!ensureAuthReady()) return;
         myTeam = (teamColor === 'Blue') ? 'A' : 'B';
         myRole = role;
         const key = `${myTeam}-${role}`;
-        db.ref('presence/' + key).set(myId).then(() => {
+        db.ref('presence/' + key).set({ id: myId, name: myName, joinedAt: Date.now() }).then(() => {
             db.ref('presence/' + key).onDisconnect().remove();
             document.getElementById('lobby').style.display = 'none';
             document.getElementById('main-container').style.display = 'block';
-            document.getElementById('user-tag').innerText = `${teamColor} ${role}`;
+            document.getElementById('user-tag').innerText = `${teamColor} ${role} (${myName})`;
             document.getElementById('user-tag').style.color = (teamColor === 'Blue') ? 'var(--blue-main)' : 'var(--red-main)';
             renderGrids();
         }).catch(showDbError);
