@@ -4,8 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>SC2 2:2 PICK DASHBOARD</title>
+    
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
     <style>
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
 
@@ -57,7 +60,6 @@
         .blue-title { color: var(--blue-main); }
         .red-title { color: var(--red-main); }
 
-        /* Role Cards */
         .role-card { 
             position: relative; border-radius: 12px; padding: 20px; cursor: pointer; 
             transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); border: 1px solid transparent;
@@ -66,7 +68,6 @@
         .role-card.selector { background: #252525; border: 1px solid #333; }
         .role-card.selector:hover { transform: translateY(-2px); border-color: #444; }
 
-        /* Blue/Red Specific Styles */
         .blue-active .role-card.selector { background: var(--blue-main); }
         .red-active .role-card.selector { background: var(--red-main); }
 
@@ -76,7 +77,6 @@
 
         .role-name { font-weight: 600; font-size: 1rem; margin-bottom: 4px; display: block; }
         
-        /* Status Badge */
         .status-badge { font-size: 0.75rem; display: flex; align-items: center; gap: 5px; opacity: 0.8; }
         .dot { width: 6px; height: 6px; background-color: var(--success); border-radius: 50%; display: inline-block; box-shadow: 0 0 8px var(--success); animation: blink 1.5s infinite; }
         
@@ -181,10 +181,24 @@
 </div>
 
 <script>
-    const DATABASE_URL = "https://scpick-d320f-default-rtdb.asia-southeast1.firebasedatabase.app/";
-    firebase.initializeApp({ databaseURL: DATABASE_URL });
+    // 2. Firebase 설정 및 초기화
+    const firebaseConfig = {
+        apiKey: "REMOVED_OLD_EXPOSED_KEY",
+        authDomain: "scpick-d320f.firebaseapp.com",
+        databaseURL: "https://scpick-d320f-default-rtdb.asia-southeast1.firebasedatabase.app/",
+        projectId: "scpick-d320f",
+        storageBucket: "scpick-d320f.appspot.com",
+        messagingSenderId: "660478793913",
+        appId: "1:660478793913:web:9bc5f9b75d0288128e2368"
+    };
+
+    firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
 
+    // 3. 익명 인증 실행
+    firebase.auth().signInAnonymously().catch((e) => console.error("인증실패:", e.message));
+
+    // --- 게임 로직 변수 및 함수 ---
     const RACES = [
         { id: 1, label: "저그 + 저그" }, { id: 2, label: "저그 + 토스" },
         { id: 3, label: "저그 + 테란" }, { id: 4, label: "저그 + 랜덤" },
@@ -201,12 +215,14 @@
         ['A-Selector', 'B-Selector', 'A-Viewer', 'B-Viewer'].forEach(key => {
             const card = document.getElementById('card-' + key);
             const tag = document.getElementById('tag-' + key);
-            if (pres[key]) { 
-                card.classList.add('locked'); 
-                tag.innerHTML = '점유 중';
-            } else { 
-                card.classList.remove('locked'); 
-                tag.innerHTML = '<span class="dot"></span>접속 가능';
+            if (card && tag) {
+                if (pres[key]) { 
+                    card.classList.add('locked'); 
+                    tag.innerHTML = '점유 중';
+                } else { 
+                    card.classList.remove('locked'); 
+                    tag.innerHTML = '<span class="dot"></span>접속 가능';
+                }
             }
         });
     });
@@ -314,4 +330,3 @@
 </script>
 </body>
 </html>
-
