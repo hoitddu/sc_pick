@@ -145,6 +145,12 @@
         .name-chosen-row { display: flex; align-items: center; gap: 10px; font-size: 0.85rem; margin-bottom: 24px; }
         .name-chosen-val { font-weight: 700; color: var(--text-main); }
         .btn-name-change { background: none; border: 1px solid #333; color: var(--text-dim); font-size: 0.75rem; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+
+        /* --- SAVE SECTION --- */
+        .save-section { margin-top: 20px; padding: 16px; background: var(--card-bg); border-radius: 12px; border: 1px solid #2a2a2a; text-align: center; }
+        .btn-save { background: #f0c040; color: #111; width: 100%; padding: 16px; border-radius: 12px; border: none; font-size: 1rem; font-weight: 700; cursor: pointer; }
+        .btn-save:disabled { background: #333; color: #666; cursor: default; }
+        .save-done-text { font-size: 0.85rem; color: var(--success); font-weight: 600; padding: 8px 0; }
     </style>
 </head>
 <body>
@@ -243,6 +249,13 @@
             <tbody id="history-body"></tbody>
         </table>
     </div>
+
+    <!-- SAVE SECTION -->
+    <div class="save-section" id="save-section" style="display:none;">
+        <button class="btn-save" id="btn-save" onclick="saveSession()">💾 세션 저장</button>
+        <div class="save-done-text" id="save-done-text" style="display:none;"></div>
+    </div>
+
     <button onclick="handleReset(false)" style="margin-top:30px; background:none; border:none; color:#444; font-size:0.7rem; width:100%; text-decoration:underline;">경기 데이터 초기화</button>
 </div>
 
@@ -357,7 +370,10 @@
         bDone: false,
         history: [],
         awaitingResult: false,
-        pendingMatch: null
+        pendingMatch: null,
+        saved: false,
+        savedAt: null,
+        savedByName: null
     });
 
     function normalizeGameState(state) {
@@ -372,7 +388,10 @@
             bDone: !!safeState.bDone,
             history: Array.isArray(safeState.history) ? safeState.history : [],
             awaitingResult: !!safeState.awaitingResult,
-            pendingMatch: safeState.pendingMatch || null
+            pendingMatch: safeState.pendingMatch || null,
+            saved: !!safeState.saved,
+            savedAt: safeState.savedAt || null,
+            savedByName: safeState.savedByName || null
         };
     }
 
@@ -509,6 +528,49 @@
         db.ref('gameState').set(gameState).catch(showDbError);
     }
 
+    function formatTimestamp(ts) {
+        if (!ts) return '';
+        const d = new Date(ts);
+        return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+
+    function saveSessionCore() {
+        // 3단계에서 구현: matches / statsDaily 저장
+        console.log('[saveSessionCore] lock acquired. matches/statsDaily save to be implemented in stage 3.');
+    }
+
+    function saveSession() {
+        if (!ensureAuthReady()) return;
+        const btnSave = document.getElementById('btn-save');
+        if (btnSave) btnSave.disabled = true;
+
+        db.ref('gameState').transaction(current => {
+            if (!current) return current;   // 데이터 없으면 중단
+            if (current.saved) return;      // 이미 저장됨 → abort (undefined 반환)
+
+            const toArr = v => Array.isArray(v) ? v : (v ? Object.values(v) : []);
+            return Object.assign({}, current, {
+                aUsed: toArr(current.aUsed),
+                bUsed: toArr(current.bUsed),
+                history: toArr(current.history),
+                saved: true,
+                savedAt: Date.now(),
+                savedByName: myName
+            });
+        }, (err, committed) => {
+            if (err) {
+                showDbError(err);
+                if (btnSave) btnSave.disabled = false;
+                return;
+            }
+            if (committed) {
+                saveSessionCore();
+            } else {
+                alert('이미 다른 참가자가 저장했습니다.');
+            }
+        });
+    }
+
     function handleReset(isForce) {
         if (confirm(isForce ? "시스템을 강제 초기화할까요?" : "데이터를 초기화할까요?")) {
             if (!ensureAuthReady()) return;
@@ -583,6 +645,28 @@
             scoreBlue.innerText = String(blueWins);
             scoreRed.innerText = String(redWins);
             scoreSummary.innerText = gameState.awaitingResult ? `Result pending for Round ${gameState.round}  |  Played ${played} / 10` : `Played ${played} / 10`;
+        }
+
+        // Save section
+        const saveSection = document.getElementById('save-section');
+        const btnSave = document.getElementById('btn-save');
+        const saveDoneText = document.getElementById('save-done-text');
+        if (saveSection && btnSave && saveDoneText) {
+            const playedCount = (gameState.history || []).length;
+            const isDone = playedCount === 10 && !gameState.awaitingResult;
+            if (!isDone) {
+                saveSection.style.display = 'none';
+            } else if (gameState.saved) {
+                saveSection.style.display = 'block';
+                btnSave.style.display = 'none';
+                saveDoneText.style.display = 'block';
+                saveDoneText.innerText = `✅ 저장 완료: ${gameState.savedByName || '?'} (${formatTimestamp(gameState.savedAt)})`;
+            } else {
+                saveSection.style.display = 'block';
+                btnSave.style.display = 'block';
+                btnSave.disabled = false;
+                saveDoneText.style.display = 'none';
+            }
         }
     }
 </script>
