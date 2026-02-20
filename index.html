@@ -244,7 +244,24 @@
     const db = firebase.database();
 
     // 3. 익명 인증 실행
-    firebase.auth().signInAnonymously().catch((e) => console.error("인증실패:", e.message));
+    let authReady = false;
+    firebase.auth().onAuthStateChanged((user) => { authReady = !!user; });
+    firebase.auth().signInAnonymously().catch((e) => {
+        console.error("인증실패:", e.message);
+        alert(`Firebase 익명 인증 실패: ${e.message}`);
+    });
+
+    function showDbError(err) {
+        const msg = (err && (err.message || err.code)) ? (err.message || err.code) : '알 수 없는 오류';
+        console.error('DB 작업 실패:', err);
+        alert(`저장 실패: ${msg}`);
+    }
+
+    function ensureAuthReady() {
+        if (authReady && firebase.auth().currentUser) return true;
+        alert('인증이 아직 완료되지 않았습니다. 잠시 후 다시 시도해주세요.');
+        return false;
+    }
 
     // --- 게임 로직 변수 및 함수 ---
     const RACES = [
@@ -307,23 +324,27 @@
     db.ref('gameState').on('value', snap => { if (snap.exists()) { gameState = normalizeGameState(snap.val()); updateUI(); } });
 
     function join(teamColor, role) {
+        if (!ensureAuthReady()) return;
         myTeam = (teamColor === 'Blue') ? 'A' : 'B';
         myRole = role;
         const key = `${myTeam}-${role}`;
-        db.ref('presence/' + key).set(myId);
-        db.ref('presence/' + key).onDisconnect().remove();
-        document.getElementById('lobby').style.display = 'none';
-        document.getElementById('main-container').style.display = 'block';
-        document.getElementById('user-tag').innerText = `${teamColor} ${role}`;
-        document.getElementById('user-tag').style.color = (teamColor === 'Blue') ? 'var(--blue-main)' : 'var(--red-main)';
-        renderGrids();
+        db.ref('presence/' + key).set(myId).then(() => {
+            db.ref('presence/' + key).onDisconnect().remove();
+            document.getElementById('lobby').style.display = 'none';
+            document.getElementById('main-container').style.display = 'block';
+            document.getElementById('user-tag').innerText = `${teamColor} ${role}`;
+            document.getElementById('user-tag').style.color = (teamColor === 'Blue') ? 'var(--blue-main)' : 'var(--red-main)';
+            renderGrids();
+        }).catch(showDbError);
     }
 
     function goHome() {
         if(confirm("로비로 이동하시겠습니까?")) {
+            if (!ensureAuthReady()) return;
             const key = `${myTeam}-${myRole}`;
-            db.ref('presence/' + key).remove();
-            location.reload();
+            db.ref('presence/' + key).remove().then(() => {
+                location.reload();
+            }).catch(showDbError);
         }
     }
 
@@ -333,11 +354,12 @@
             const d = document.createElement('div'); d.className = 'race-item'; d.id = `race-${r.id}`; d.innerText = r.label;
             d.onclick = () => {
                 if (myRole !== 'Selector') return;
+                if (!ensureAuthReady()) return;
                 const used = myTeam === 'A' ? (gameState.aUsed || []) : (gameState.bUsed || []);
                 const done = myTeam === 'A' ? gameState.aDone : gameState.bDone;
                 if (!used.includes(r.id) && !done && !gameState.awaitingResult && gameState.round <= 10) {
                     if (myTeam === 'A') gameState.aPick = r; else gameState.bPick = r;
-                    db.ref('gameState').set(gameState);
+                    db.ref('gameState').set(gameState).catch(showDbError);
                 }
             };
             grid.appendChild(d);
@@ -349,6 +371,7 @@
     }
 
     function confirmSelection() {
+        if (!ensureAuthReady()) return;
         if (myRole !== 'Selector' || gameState.awaitingResult || gameState.round > 10) return;
         if (myTeam === 'A' && !gameState.aPick) return;
         if (myTeam === 'B' && !gameState.bPick) return;
@@ -359,10 +382,11 @@
             gameState.awaitingResult = true;
             gameState.pendingMatch = { r: gameState.round, a: gameState.aPick, b: gameState.bPick };
         }
-        db.ref('gameState').set(gameState);
+        db.ref('gameState').set(gameState).catch(showDbError);
     }
 
     function submitRoundResult(myResult) {
+        if (!ensureAuthReady()) return;
         if (myRole !== 'Selector' || !gameState.awaitingResult || !gameState.pendingMatch) return;
         if (myResult !== 'W' && myResult !== 'L') return;
 
@@ -399,13 +423,15 @@
         gameState.awaitingResult = false;
         gameState.pendingMatch = null;
 
-        db.ref('gameState').set(gameState);
+        db.ref('gameState').set(gameState).catch(showDbError);
     }
 
     function handleReset(isForce) {
         if (confirm(isForce ? "시스템을 강제 초기화할까요?" : "데이터를 초기화할까요?")) {
-            db.ref('gameState').set(createInitialState());
-            if (isForce) db.ref('presence').remove().then(() => { location.reload(); });
+            if (!ensureAuthReady()) return;
+            db.ref('gameState').set(createInitialState()).then(() => {
+                if (isForce) db.ref('presence').remove().then(() => { location.reload(); }).catch(showDbError);
+            }).catch(showDbError);
         }
     }
 
