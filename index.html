@@ -156,6 +156,8 @@
         .score-pos { color: #2ecc71; font-weight: 700; }
         .score-neg { color: #ff5e5e; font-weight: 700; }
         .score-zero { color: var(--text-dim); }
+        .board-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+        @media (max-width: 480px) { .board-grid { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
@@ -271,21 +273,34 @@
 <div class="container" id="daily-board">
     <header>
         <button class="btn-home" onclick="hideDailyBoard()">← 뒤로</button>
-        <h2>일자별 보드</h2>
+        <h2>점수 보드</h2>
         <div></div>
     </header>
-    <div style="display:flex; gap:8px; margin-bottom:16px; align-items:center;">
-        <input type="date" id="board-date-input"
+    <div style="display:flex; gap:8px; margin-bottom:20px; align-items:center;">
+        <input type="month" id="board-month-input"
             style="flex:1; background:#252525; border:1px solid #333; color:#fff; border-radius:8px; padding:8px 12px; font-size:0.85rem; box-sizing:border-box;" />
-        <button onclick="loadDailyBoard()"
+        <button onclick="loadBoard()"
             style="background:#333; border:none; color:#fff; padding:8px 16px; border-radius:8px; cursor:pointer; font-size:0.85rem;">조회</button>
     </div>
+    <div class="board-grid">
+        <div class="history-section" style="margin-top:0;">
+            <div id="board-month-label" style="font-size:0.8rem; font-weight:700; margin-bottom:8px;">월별 점수</div>
+            <table>
+                <thead><tr><th style="text-align:left; padding-left:8px;">이름</th><th>점수</th></tr></thead>
+                <tbody id="board-month-tbody"></tbody>
+            </table>
+        </div>
+        <div class="history-section" style="margin-top:0;">
+            <div id="board-year-label" style="font-size:0.8rem; font-weight:700; margin-bottom:8px;">연간 점수</div>
+            <table>
+                <thead><tr><th style="text-align:left; padding-left:8px;">이름</th><th>점수</th></tr></thead>
+                <tbody id="board-year-tbody"></tbody>
+            </table>
+        </div>
+    </div>
     <div class="history-section">
-        <div style="font-size:0.8rem; font-weight:700; margin-bottom:8px;" id="board-date-label"></div>
-        <table>
-            <thead><tr><th>이름</th><th>점수</th></tr></thead>
-            <tbody id="board-tbody"></tbody>
-        </table>
+        <div style="font-size:0.8rem; font-weight:700; margin-bottom:12px;" id="board-matches-label">경기 기록</div>
+        <div id="board-matches-list"></div>
     </div>
 </div>
 
@@ -679,9 +694,11 @@
     function showDailyBoard() {
         document.getElementById('lobby').style.display = 'none';
         document.getElementById('daily-board').style.display = 'block';
-        const input = document.getElementById('board-date-input');
-        input.value = getDateKeyKST();
-        loadDailyBoard();
+        const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+        const y = kst.getUTCFullYear();
+        const m = String(kst.getUTCMonth() + 1).padStart(2, '0');
+        document.getElementById('board-month-input').value = `${y}-${m}`;
+        loadBoard();
     }
 
     function hideDailyBoard() {
@@ -689,27 +706,125 @@
         document.getElementById('lobby').style.display = 'flex';
     }
 
-    function loadDailyBoard() {
-        const input = document.getElementById('board-date-input');
-        const dateKey = input.value || getDateKeyKST();
-        document.getElementById('board-date-label').innerText = `${dateKey} 누적 점수`;
-        const tbody = document.getElementById('board-tbody');
-        tbody.innerHTML = '<tr><td colspan="2" style="color:var(--text-dim);">로딩 중...</td></tr>';
-
-        db.ref(`statsDaily/${dateKey}`).once('value').then(snap => {
-            const data = snap.val() || {};
-            tbody.innerHTML = '';
-            // 점수 내림차순 정렬 표시
-            const sorted = MEMBERS.slice().sort((a, b) => (data[b] || 0) - (data[a] || 0));
-            sorted.forEach(name => {
-                const pts = data[name] !== undefined ? data[name] : 0;
-                const cls = pts > 0 ? 'score-pos' : (pts < 0 ? 'score-neg' : 'score-zero');
-                const sign = pts > 0 ? '+' : '';
-                tbody.innerHTML += `<tr><td style="text-align:left; padding-left:16px;">${name}</td><td class="${cls}">${sign}${pts}</td></tr>`;
+    // statsDaily 스냅샷 val({dateKey: {name: pts}})을 MEMBERS별 합산으로 변환
+    function aggregateScores(val) {
+        const totals = {};
+        MEMBERS.forEach(n => { totals[n] = 0; });
+        if (!val || typeof val !== 'object') return totals;
+        Object.values(val).forEach(dayData => {
+            if (!dayData || typeof dayData !== 'object') return;
+            MEMBERS.forEach(name => {
+                if (typeof dayData[name] === 'number') totals[name] += dayData[name];
             });
-        }).catch(err => {
-            tbody.innerHTML = '<tr><td colspan="2" style="color:#ff5e5e;">로드 실패</td></tr>';
-            console.error(err);
+        });
+        return totals;
+    }
+
+    function renderScoreTable(tbodyId, totals) {
+        const tbody = document.getElementById(tbodyId);
+        tbody.innerHTML = '';
+        const sorted = MEMBERS.slice().sort((a, b) => (totals[b] || 0) - (totals[a] || 0));
+        sorted.forEach(name => {
+            const pts = totals[name] || 0;
+            const cls = pts > 0 ? 'score-pos' : (pts < 0 ? 'score-neg' : 'score-zero');
+            const sign = pts > 0 ? '+' : '';
+            tbody.innerHTML += `<tr><td style="text-align:left; padding-left:8px;">${name}</td><td class="${cls}">${sign}${pts}</td></tr>`;
+        });
+    }
+
+    function renderMatchList(matchVal, yearMonth) {
+        const container = document.getElementById('board-matches-list');
+        document.getElementById('board-matches-label').innerText = `${yearMonth} 경기 기록`;
+        if (!matchVal || typeof matchVal !== 'object') {
+            container.innerHTML = '<div style="color:var(--text-dim); font-size:0.8rem; padding:8px 0;">이 달 경기 기록이 없습니다.</div>';
+            return;
+        }
+        const dateKeys = Object.keys(matchVal).sort().reverse();
+        if (dateKeys.length === 0) {
+            container.innerHTML = '<div style="color:var(--text-dim); font-size:0.8rem; padding:8px 0;">이 달 경기 기록이 없습니다.</div>';
+            return;
+        }
+        container.innerHTML = '';
+        dateKeys.forEach(dateKey => {
+            const sessions = matchVal[dateKey] || {};
+            const sessionList = Object.values(sessions)
+                .filter(s => s && typeof s === 'object')
+                .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+            let html = `<div style="font-size:0.78rem; color:var(--text-dim); font-weight:700; margin:12px 0 6px; border-bottom:1px solid #2a2a2a; padding-bottom:4px;">${dateKey}</div>`;
+            sessionList.forEach(s => {
+                const bw = s.blueWins !== undefined ? s.blueWins : '?';
+                const rw = s.redWins !== undefined ? s.redWins : '?';
+                const aS = (s.players && s.players.aSelector) || '?';
+                const aV = (s.players && s.players.aViewer) || '-';
+                const bS = (s.players && s.players.bSelector) || '?';
+                const bV = (s.players && s.players.bViewer) || '-';
+                const winTag = s.winnerTeam === 'A'
+                    ? `<span style="color:var(--blue-main);font-weight:700;font-size:0.7rem;">BLUE WIN</span>`
+                    : s.winnerTeam === 'B'
+                    ? `<span style="color:var(--red-main);font-weight:700;font-size:0.7rem;">RED WIN</span>`
+                    : `<span style="color:var(--text-dim);font-size:0.7rem;">DRAW</span>`;
+                const timeStr = s.createdAt ? formatTimestamp(s.createdAt) : '';
+                html += `<div style="background:#1e1e1e;border-radius:8px;padding:10px 12px;margin-bottom:6px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <span style="color:var(--text-dim);font-size:0.72rem;">${timeStr}</span>${winTag}
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;text-align:center;">
+                        <div>
+                            <div style="color:var(--blue-main);font-weight:600;font-size:0.82rem;">${aS}</div>
+                            <div style="color:var(--blue-main);opacity:0.6;font-size:0.7rem;">${aV}</div>
+                        </div>
+                        <div style="font-weight:800;font-size:1.1rem;">${bw}:${rw}</div>
+                        <div>
+                            <div style="color:var(--red-main);font-weight:600;font-size:0.82rem;">${bS}</div>
+                            <div style="color:var(--red-main);opacity:0.6;font-size:0.7rem;">${bV}</div>
+                        </div>
+                    </div>
+                </div>`;
+            });
+            const dayDiv = document.createElement('div');
+            dayDiv.innerHTML = html;
+            container.appendChild(dayDiv);
+        });
+    }
+
+    function loadBoard() {
+        const yearMonth = document.getElementById('board-month-input').value;
+        if (!yearMonth) return;
+        const year = yearMonth.slice(0, 4);
+        const monthPfx = yearMonth + '-';
+        const yearPfx  = year + '-';
+
+        document.getElementById('board-month-label').innerText = `${yearMonth} 월별 점수`;
+        document.getElementById('board-year-label').innerText  = `${year}년 연간 점수`;
+        ['board-month-tbody', 'board-year-tbody'].forEach(id => {
+            document.getElementById(id).innerHTML = '<tr><td colspan="2" style="color:var(--text-dim);font-size:0.8rem;">로딩 중...</td></tr>';
+        });
+        document.getElementById('board-matches-list').innerHTML = '<div style="color:var(--text-dim);font-size:0.8rem;">로딩 중...</div>';
+
+        const safe = ref => ref.once('value').catch(err => {
+            console.warn('board query failed:', err.message || err);
+            return null;
+        });
+
+        Promise.all([
+            safe(db.ref('statsDaily').orderByKey().startAt(monthPfx).endAt(monthPfx + '\uf8ff')),
+            safe(db.ref('statsDaily').orderByKey().startAt(yearPfx).endAt(yearPfx + '\uf8ff')),
+            safe(db.ref('matches').orderByKey().startAt(monthPfx).endAt(monthPfx + '\uf8ff'))
+        ]).then(([monthSnap, yearSnap, matchSnap]) => {
+            const monthVal = monthSnap ? monthSnap.val() : null;
+            const yearVal  = yearSnap  ? yearSnap.val()  : null;
+            const matchVal = matchSnap ? matchSnap.val() : null;
+
+            if (monthVal === null && yearVal === null && matchVal === null) {
+                const errRow = '<tr><td colspan="2" style="color:#ff5e5e;font-size:0.75rem;">읽기 권한 없음 — Firebase Rules 확인 필요</td></tr>';
+                document.getElementById('board-month-tbody').innerHTML = errRow;
+                document.getElementById('board-year-tbody').innerHTML  = errRow;
+                document.getElementById('board-matches-list').innerHTML = '<div style="color:#ff5e5e;font-size:0.75rem;">Firebase RTDB Rules에서 statsDaily, matches 읽기 권한을 허용해주세요.</div>';
+                return;
+            }
+            renderScoreTable('board-month-tbody', aggregateScores(monthVal));
+            renderScoreTable('board-year-tbody',  aggregateScores(yearVal));
+            renderMatchList(matchVal, yearMonth);
         });
     }
 
