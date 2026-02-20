@@ -101,6 +101,28 @@
         
         .btn-confirm { background: var(--success); color: white; width: 100%; padding: 18px; border-radius: 12px; border: none; font-size: 1.1rem; font-weight: 700; margin-top: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.4); }
         .btn-confirm:disabled { background: #333; box-shadow: none; color: #666; }
+        .result-panel { margin-top: 14px; background: #161616; border: 1px solid #2a2a2a; border-radius: 12px; padding: 14px; }
+        .result-title { font-size: 0.9rem; font-weight: 700; }
+        .result-hint { font-size: 0.78rem; color: var(--text-dim); margin-top: 6px; }
+        .result-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+        .btn-result { border: none; border-radius: 10px; padding: 12px 8px; color: #fff; font-weight: 700; cursor: pointer; }
+        .btn-result:disabled { opacity: 0.35; cursor: default; }
+        .btn-result-win { background: #2b7cff; }
+        .btn-result-lose { background: #ff5e5e; }
+        .score-summary { font-size: 0.78rem; color: var(--text-dim); margin-top: 8px; }
+        .score-board { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; margin-top: 10px; }
+        .score-team { background: #202020; border: 1px solid #2f2f2f; border-radius: 10px; padding: 10px; text-align: center; }
+        .score-team.blue { border-color: rgba(0, 123, 255, 0.45); }
+        .score-team.red { border-color: rgba(255, 75, 75, 0.45); }
+        .score-name { font-size: 0.7rem; color: var(--text-dim); }
+        .score-num { font-size: 1.5rem; font-weight: 800; line-height: 1.2; margin-top: 2px; }
+        .score-num.blue { color: var(--blue-main); }
+        .score-num.red { color: var(--red-main); }
+        .score-vs { color: var(--text-dim); font-size: 0.75rem; font-weight: 700; }
+        .history-pick { margin-bottom: 6px; line-height: 1.2; }
+        .result-badge { display: inline-block; min-width: 20px; padding: 2px 8px; border-radius: 999px; font-size: 0.7rem; font-weight: 700; color: #bbb; background: #2a2a2a; }
+        .result-badge.win { color: #7fffc1; background: rgba(46, 204, 113, 0.18); border: 1px solid rgba(46, 204, 113, 0.5); }
+        .result-badge.lose { color: #ffc4c4; background: rgba(255, 75, 75, 0.18); border: 1px solid rgba(255, 75, 75, 0.45); }
 
         .history-section { background: var(--card-bg); border-radius: 15px; padding: 15px; margin-top: 30px; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.85rem; }
@@ -167,11 +189,32 @@
     <div class="race-grid" id="main-race-grid"></div>
     <button id="btn-confirm" class="btn-confirm" disabled onclick="confirmSelection()">선택 확정</button>
 
+    <div class="result-panel" id="result-panel" style="display:none;">
+        <div class="result-title">Round Result</div>
+        <div class="result-hint" id="result-hint">Wait for result input.</div>
+        <div class="result-actions">
+            <button id="btn-result-win" class="btn-result btn-result-win" onclick="submitRoundResult('W')">My Team Win</button>
+            <button id="btn-result-lose" class="btn-result btn-result-lose" onclick="submitRoundResult('L')">My Team Lose</button>
+        </div>
+    </div>
+
     <div class="history-section">
         <div style="font-size:0.8rem; font-weight:700;">상대 남은 조합</div>
         <div id="opp-rem-list" class="rem-list"></div>
         
         <div style="font-size:0.8rem; font-weight:700; margin-top:25px;">History</div>
+        <div class="score-board">
+            <div class="score-team blue">
+                <div class="score-name">BLUE WINS</div>
+                <div id="score-blue" class="score-num blue">0</div>
+            </div>
+            <div class="score-vs">VS</div>
+            <div class="score-team red">
+                <div class="score-name">RED WINS</div>
+                <div id="score-red" class="score-num red">0</div>
+            </div>
+        </div>
+        <div id="score-summary" class="score-summary">Played 0 / 10</div>
         <table>
             <thead><tr><th>RD</th><th style="color:var(--blue-main)">Blue</th><th style="color:var(--red-main)">Red</th></tr></thead>
             <tbody id="history-body"></tbody>
@@ -213,7 +256,36 @@
     ];
 
     let myTeam, myRole, myId = Math.random().toString(36).substr(2, 9);
-    let gameState = { round: 1, aUsed: [], bUsed: [], aPick: null, bPick: null, aDone: false, bDone: false, history: [] };
+    const createInitialState = () => ({
+        round: 1,
+        aUsed: [],
+        bUsed: [],
+        aPick: null,
+        bPick: null,
+        aDone: false,
+        bDone: false,
+        history: [],
+        awaitingResult: false,
+        pendingMatch: null
+    });
+
+    function normalizeGameState(state) {
+        const safeState = state || {};
+        return {
+            round: safeState.round || 1,
+            aUsed: Array.isArray(safeState.aUsed) ? safeState.aUsed : [],
+            bUsed: Array.isArray(safeState.bUsed) ? safeState.bUsed : [],
+            aPick: safeState.aPick || null,
+            bPick: safeState.bPick || null,
+            aDone: !!safeState.aDone,
+            bDone: !!safeState.bDone,
+            history: Array.isArray(safeState.history) ? safeState.history : [],
+            awaitingResult: !!safeState.awaitingResult,
+            pendingMatch: safeState.pendingMatch || null
+        };
+    }
+
+    let gameState = createInitialState();
 
     db.ref('presence').on('value', snap => {
         const pres = snap.val() || {};
@@ -232,7 +304,7 @@
         });
     });
 
-    db.ref('gameState').on('value', snap => { if (snap.exists()) { gameState = snap.val(); updateUI(); } });
+    db.ref('gameState').on('value', snap => { if (snap.exists()) { gameState = normalizeGameState(snap.val()); updateUI(); } });
 
     function join(teamColor, role) {
         myTeam = (teamColor === 'Blue') ? 'A' : 'B';
@@ -263,7 +335,7 @@
                 if (myRole !== 'Selector') return;
                 const used = myTeam === 'A' ? (gameState.aUsed || []) : (gameState.bUsed || []);
                 const done = myTeam === 'A' ? gameState.aDone : gameState.bDone;
-                if (!used.includes(r.id) && !done && gameState.round <= 10) {
+                if (!used.includes(r.id) && !done && !gameState.awaitingResult && gameState.round <= 10) {
                     if (myTeam === 'A') gameState.aPick = r; else gameState.bPick = r;
                     db.ref('gameState').set(gameState);
                 }
@@ -277,24 +349,62 @@
     }
 
     function confirmSelection() {
+        if (myRole !== 'Selector' || gameState.awaitingResult || gameState.round > 10) return;
+        if (myTeam === 'A' && !gameState.aPick) return;
+        if (myTeam === 'B' && !gameState.bPick) return;
+
         if (myTeam === 'A') gameState.aDone = true; else gameState.bDone = true;
         if (gameState.aDone && gameState.bDone) {
-            if (!gameState.history) gameState.history = [];
-            if (!gameState.aUsed) gameState.aUsed = [];
-            if (!gameState.bUsed) gameState.bUsed = [];
-            gameState.history.push({ r: gameState.round, a: gameState.aPick, b: gameState.bPick });
-            gameState.aUsed.push(gameState.aPick.id);
-            gameState.bUsed.push(gameState.bPick.id);
-            gameState.round++;
-            gameState.aDone = false; gameState.bDone = false;
-            gameState.aPick = null; gameState.bPick = null;
+            if (!gameState.aPick || !gameState.bPick) return;
+            gameState.awaitingResult = true;
+            gameState.pendingMatch = { r: gameState.round, a: gameState.aPick, b: gameState.bPick };
         }
+        db.ref('gameState').set(gameState);
+    }
+
+    function submitRoundResult(myResult) {
+        if (myRole !== 'Selector' || !gameState.awaitingResult || !gameState.pendingMatch) return;
+        if (myResult !== 'W' && myResult !== 'L') return;
+
+        if (!gameState.history) gameState.history = [];
+        if (!gameState.aUsed) gameState.aUsed = [];
+        if (!gameState.bUsed) gameState.bUsed = [];
+
+        const winner = myResult === 'W' ? myTeam : (myTeam === 'A' ? 'B' : 'A');
+        const aResult = winner === 'A' ? 'W' : 'L';
+        const bResult = winner === 'B' ? 'W' : 'L';
+        const roundNo = gameState.pendingMatch.r || gameState.round;
+
+        // Prevent duplicate write for same round in the same client state.
+        if (gameState.history.some(h => h.r === roundNo)) return;
+
+        const roundHistory = {
+            r: roundNo,
+            a: gameState.pendingMatch.a,
+            b: gameState.pendingMatch.b,
+            winner,
+            aResult,
+            bResult
+        };
+        gameState.history.push(roundHistory);
+
+        if (roundHistory.a && roundHistory.a.id && !gameState.aUsed.includes(roundHistory.a.id)) gameState.aUsed.push(roundHistory.a.id);
+        if (roundHistory.b && roundHistory.b.id && !gameState.bUsed.includes(roundHistory.b.id)) gameState.bUsed.push(roundHistory.b.id);
+
+        gameState.round++;
+        gameState.aDone = false;
+        gameState.bDone = false;
+        gameState.aPick = null;
+        gameState.bPick = null;
+        gameState.awaitingResult = false;
+        gameState.pendingMatch = null;
+
         db.ref('gameState').set(gameState);
     }
 
     function handleReset(isForce) {
         if (confirm(isForce ? "시스템을 강제 초기화할까요?" : "데이터를 초기화할까요?")) {
-            db.ref('gameState').set({ round: 1, aUsed: [], bUsed: [], aPick: null, bPick: null, aDone: false, bDone: false, history: [] });
+            db.ref('gameState').set(createInitialState());
             if (isForce) db.ref('presence').remove().then(() => { location.reload(); });
         }
     }
@@ -305,7 +415,7 @@
         const myPick = myTeam === 'A' ? gameState.aPick : gameState.bPick;
         const oppDone = myTeam === 'A' ? gameState.bDone : gameState.aDone;
         document.getElementById('ui-pick-my').innerText = myPick ? myPick.label : "-";
-        document.getElementById('ui-pick-opp').innerText = oppDone ? "Ready" : "Selecting...";
+        document.getElementById('ui-pick-opp').innerText = gameState.awaitingResult ? "Result pending..." : (oppDone ? "Ready" : "Selecting...");
         
         const myUsed = myTeam === 'A' ? (gameState.aUsed || []) : (gameState.bUsed || []);
         const oppUsed = myTeam === 'A' ? (gameState.bUsed || []) : (gameState.aUsed || []);
@@ -321,15 +431,49 @@
             if (rel) rel.className = oppUsed.includes(r.id) ? 'rem-item used' : 'rem-item';
         });
 
-        document.getElementById('btn-confirm').disabled = (myRole !== 'Selector' || !myPick || myDone || gameState.round > 10);
+        document.getElementById('btn-confirm').disabled = (myRole !== 'Selector' || !myPick || myDone || gameState.round > 10 || gameState.awaitingResult);
+        
+        const resultPanel = document.getElementById('result-panel');
+        const resultHint = document.getElementById('result-hint');
+        const btnResultWin = document.getElementById('btn-result-win');
+        const btnResultLose = document.getElementById('btn-result-lose');
+        if (resultPanel && resultHint && btnResultWin && btnResultLose) {
+            const canSubmitResult = (myRole === 'Selector' && gameState.awaitingResult && gameState.round <= 10);
+            resultPanel.style.display = gameState.awaitingResult ? 'block' : 'none';
+            resultHint.innerText = canSubmitResult ? `Round ${gameState.round}: choose win/loss for your team.` : `Round ${gameState.round}: waiting for selector result input.`;
+            btnResultWin.disabled = !canSubmitResult;
+            btnResultLose.disabled = !canSubmitResult;
+        }
         
         const tbody = document.getElementById('history-body'); tbody.innerHTML = '';
         if (gameState.history) {
             const sortedHistory = gameState.history.slice().reverse();
             sortedHistory.forEach((h, index) => {
                 const rowClass = index === 0 ? 'class="latest-row"' : '';
-                tbody.innerHTML += `<tr ${rowClass}><td>${h.r}</td><td style="color:var(--blue-main)">${h.a.label}</td><td style="color:var(--red-main)">${h.b.label}</td></tr>`;
+                const aLabel = h.a && h.a.label ? h.a.label : '-';
+                const bLabel = h.b && h.b.label ? h.b.label : '-';
+                const aResult = h.aResult || '-';
+                const bResult = h.bResult || '-';
+                const aBadgeClass = aResult === 'W' ? 'result-badge win' : (aResult === 'L' ? 'result-badge lose' : 'result-badge');
+                const bBadgeClass = bResult === 'W' ? 'result-badge win' : (bResult === 'L' ? 'result-badge lose' : 'result-badge');
+                tbody.innerHTML += `<tr ${rowClass}><td>${h.r}</td><td style="color:var(--blue-main)"><div class="history-pick">${aLabel}</div><span class="${aBadgeClass}">${aResult}</span></td><td style="color:var(--red-main)"><div class="history-pick">${bLabel}</div><span class="${bBadgeClass}">${bResult}</span></td></tr>`;
             });
+        }
+
+        const scoreSummary = document.getElementById('score-summary');
+        const scoreBlue = document.getElementById('score-blue');
+        const scoreRed = document.getElementById('score-red');
+        if (scoreSummary && scoreBlue && scoreRed) {
+            let blueWins = 0;
+            let redWins = 0;
+            (gameState.history || []).forEach(h => {
+                if (h.winner === 'A' || h.aResult === 'W') blueWins++;
+                if (h.winner === 'B' || h.bResult === 'W') redWins++;
+            });
+            const played = (gameState.history || []).length;
+            scoreBlue.innerText = String(blueWins);
+            scoreRed.innerText = String(redWins);
+            scoreSummary.innerText = gameState.awaitingResult ? `Result pending for Round ${gameState.round}  |  Played ${played} / 10` : `Played ${played} / 10`;
         }
     }
 </script>
