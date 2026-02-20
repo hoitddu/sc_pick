@@ -141,6 +141,7 @@
         .name-chip { padding: 8px 16px; border-radius: 999px; border: 1px solid #333; background: #252525; color: var(--text-dim); font-size: 0.85rem; cursor: pointer; transition: 0.15s; }
         .name-chip:hover { border-color: #555; }
         .name-chip.selected { background: var(--blue-main); border-color: var(--blue-main); color: #fff; font-weight: 700; }
+        .name-chip.occupied { opacity: 0.35; cursor: not-allowed; text-decoration: line-through; }
         .name-chosen-row { display: flex; align-items: center; gap: 10px; font-size: 0.85rem; margin-bottom: 24px; }
         .name-chosen-val { font-weight: 700; color: var(--text-main); }
         .btn-name-change { background: none; border: 1px solid #333; color: var(--text-dim); font-size: 0.75rem; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
@@ -298,15 +299,26 @@
 
     const MEMBERS = ['수해', '성옥', '진수', '윤우', '유강', '동주'];
     let myName = localStorage.getItem('sc2_name') || '';
+    let currentPresence = {};
+
+    function getOccupiedNames() {
+        return Object.values(currentPresence)
+            .filter(v => typeof v === 'object' && v.name)
+            .map(v => v.name);
+    }
 
     function initNameUI() {
         const chips = document.getElementById('name-chips');
         chips.innerHTML = '';
+        const occupiedNames = getOccupiedNames();
         MEMBERS.forEach(name => {
+            const isOccupied = occupiedNames.includes(name);
             const chip = document.createElement('div');
-            chip.className = 'name-chip' + (myName === name ? ' selected' : '');
-            chip.innerText = name;
-            chip.onclick = () => selectName(name);
+            chip.className = 'name-chip'
+                + (myName === name ? ' selected' : '')
+                + (isOccupied ? ' occupied' : '');
+            chip.innerText = isOccupied ? `${name} (접속 중)` : name;
+            chip.onclick = () => { if (!isOccupied) selectName(name); };
             chips.appendChild(chip);
         });
         const wrapEl = document.getElementById('name-selector-wrap');
@@ -368,6 +380,8 @@
 
     db.ref('presence').on('value', snap => {
         const pres = snap.val() || {};
+        currentPresence = pres;
+        initNameUI();
         ['A-Selector', 'B-Selector', 'A-Viewer', 'B-Viewer'].forEach(key => {
             const card = document.getElementById('card-' + key);
             const tag = document.getElementById('tag-' + key);
@@ -389,6 +403,10 @@
 
     function join(teamColor, role) {
         if (!myName) { alert('이름을 먼저 선택해주세요.'); return; }
+        if (getOccupiedNames().includes(myName)) {
+            alert(`'${myName}'은(는) 이미 다른 슬롯에서 접속 중입니다.`);
+            return;
+        }
         if (!ensureAuthReady()) return;
         myTeam = (teamColor === 'Blue') ? 'A' : 'B';
         myRole = role;
