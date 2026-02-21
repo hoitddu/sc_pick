@@ -159,6 +159,16 @@
         .board-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
         @media (max-width: 480px) { .board-grid { grid-template-columns: 1fr; } }
 
+        /* --- PRESENCE BAR (인게임) --- */
+        .presence-bar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+        .presence-team-card { background: var(--card-bg); border-radius: 10px; padding: 8px 12px; border: 1px solid #2a2a2a; }
+        .presence-team-title { font-size: 0.68rem; font-weight: 700; margin-bottom: 6px; letter-spacing: 0.3px; }
+        .presence-slot { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; padding: 2px 0; }
+        .presence-slot-label { color: var(--text-dim); flex-shrink: 0; width: 30px; }
+        .presence-slot-name { font-weight: 600; }
+        .presence-slot-name.me { color: var(--success); }
+        .presence-slot-name.empty { color: #3a3a3a; font-weight: 400; }
+
         /* --- ADMIN PANEL --- */
         .admin-login-wrap { max-width: 360px; margin: 40px auto; background: var(--card-bg); border-radius: 16px; padding: 28px 24px; border: 1px solid #2a2a2a; }
         .admin-title { font-size: 1rem; font-weight: 700; margin-bottom: 16px; color: var(--text-dim); }
@@ -241,6 +251,32 @@
         <div id="user-tag"></div>
     </header>
     
+    <!-- 접속자 현황 -->
+    <div class="presence-bar" id="presence-bar">
+        <div class="presence-team-card">
+            <div class="presence-team-title" style="color:var(--blue-main);">🔵 BLUE</div>
+            <div class="presence-slot">
+                <span class="presence-slot-label">선택자</span>
+                <span class="presence-slot-name empty" id="pslot-A-Selector">비어있음</span>
+            </div>
+            <div class="presence-slot">
+                <span class="presence-slot-label">관전자</span>
+                <span class="presence-slot-name empty" id="pslot-A-Viewer">비어있음</span>
+            </div>
+        </div>
+        <div class="presence-team-card">
+            <div class="presence-team-title" style="color:var(--red-main);">🔴 RED</div>
+            <div class="presence-slot">
+                <span class="presence-slot-label">선택자</span>
+                <span class="presence-slot-name empty" id="pslot-B-Selector">비어있음</span>
+            </div>
+            <div class="presence-slot">
+                <span class="presence-slot-label">관전자</span>
+                <span class="presence-slot-name empty" id="pslot-B-Viewer">비어있음</span>
+            </div>
+        </div>
+    </div>
+
     <div class="status-container">
         <div class="team-card-ingame" id="ui-card-my"><div style="font-size:0.7rem; color:var(--text-dim);">우리 팀</div><div id="ui-pick-my" style="font-weight:700;">-</div></div>
         <div class="team-card-ingame" id="ui-card-opp"><div style="font-size:0.7rem; color:var(--text-dim);">상대 팀</div><div id="ui-pick-opp" style="font-weight:700;">대기 중</div></div>
@@ -505,8 +541,9 @@
         currentPresence = pres;
         initNameUI();
         ['A-Selector', 'B-Selector', 'A-Viewer', 'B-Viewer'].forEach(key => {
+            // 로비 슬롯 카드
             const card = document.getElementById('card-' + key);
-            const tag = document.getElementById('tag-' + key);
+            const tag  = document.getElementById('tag-' + key);
             if (card && tag) {
                 if (pres[key]) {
                     const occupantName = (typeof pres[key] === 'object' && pres[key].name)
@@ -516,6 +553,18 @@
                 } else {
                     card.classList.remove('locked');
                     tag.innerHTML = '<span class="dot"></span>접속 가능';
+                }
+            }
+            // 인게임 접속자 패널
+            const pslot = document.getElementById('pslot-' + key);
+            if (pslot) {
+                const name = (typeof pres[key] === 'object' && pres[key].name) ? pres[key].name : null;
+                if (name) {
+                    pslot.textContent = name === myName ? name + ' (나)' : name;
+                    pslot.className = 'presence-slot-name' + (name === myName ? ' me' : '');
+                } else {
+                    pslot.textContent = '비어있음';
+                    pslot.className = 'presence-slot-name empty';
                 }
             }
         });
