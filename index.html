@@ -447,6 +447,7 @@
     ];
 
     let myTeam, myRole, myId = Math.random().toString(36).substr(2, 9);
+    let presenceRef = null, connectedRef = null;
 
     const MEMBERS = ['수해', '성옥', '진수', '윤우', '유강', '동주'];
     let myName = localStorage.getItem('sc2_name') || '';
@@ -571,6 +572,32 @@
 
     db.ref('gameState').on('value', snap => { if (snap.exists()) { gameState = normalizeGameState(snap.val()); updateUI(); } });
 
+    // Firebase 공식 presence 패턴:
+    // 연결될 때마다 onDisconnect 먼저 등록 → 그 다음 값 쓰기
+    // 이렇게 하면 순간 끊김 후 재연결 시 자동으로 presence 복구됨
+    function setupPresence(key) {
+        presenceRef = db.ref('presence/' + key);
+        if (connectedRef) db.ref('.info/connected').off('value', connectedRef);
+        connectedRef = db.ref('.info/connected').on('value', snap => {
+            if (!snap.val()) return; // 오프라인 상태: Firebase가 onDisconnect 처리
+            // (재)연결됨: 순서 중요 — onDisconnect 먼저, 그 다음 값 쓰기
+            presenceRef.onDisconnect().remove().then(() => {
+                presenceRef.set({ id: myId, name: myName, joinedAt: Date.now() });
+            }).catch(err => console.error('presence 설정 오류:', err));
+        });
+    }
+
+    function teardownPresence() {
+        if (connectedRef) {
+            db.ref('.info/connected').off('value', connectedRef);
+            connectedRef = null;
+        }
+        if (presenceRef) {
+            presenceRef.onDisconnect().cancel();
+            presenceRef = null;
+        }
+    }
+
     function join(teamColor, role) {
         if (!myName) { alert('이름을 먼저 선택해주세요.'); return; }
         if (getOccupiedNames().includes(myName)) {
@@ -581,23 +608,26 @@
         myTeam = (teamColor === 'Blue') ? 'A' : 'B';
         myRole = role;
         const key = `${myTeam}-${role}`;
-        db.ref('presence/' + key).set({ id: myId, name: myName, joinedAt: Date.now() }).then(() => {
-            db.ref('presence/' + key).onDisconnect().remove();
-            document.getElementById('lobby').style.display = 'none';
-            document.getElementById('main-container').style.display = 'block';
-            document.getElementById('user-tag').innerText = `${teamColor} ${role} (${myName})`;
-            document.getElementById('user-tag').style.color = (teamColor === 'Blue') ? 'var(--blue-main)' : 'var(--red-main)';
-            renderGrids();
-        }).catch(showDbError);
+        setupPresence(key); // 연결 유지 감시 시작 (재연결 시 자동 복구)
+        document.getElementById('lobby').style.display = 'none';
+        document.getElementById('main-container').style.display = 'block';
+        document.getElementById('user-tag').innerText = `${teamColor} ${role} (${myName})`;
+        document.getElementById('user-tag').style.color = (teamColor === 'Blue') ? 'var(--blue-main)' : 'var(--red-main)';
+        renderGrids();
     }
 
     function goHome() {
-        if(confirm("로비로 이동하시겠습니까?")) {
-            if (!ensureAuthReady()) return;
-            const key = `${myTeam}-${myRole}`;
-            db.ref('presence/' + key).remove().then(() => {
+        if (confirm("로비로 이동하시겠습니까?")) {
+            teardownPresence(); // 자동 재연결 presence 감시 중단
+            const key = myTeam && myRole ? `${myTeam}-${myRole}` : null;
+            if (key) {
+                // remove 성공/실패 무관하게 항상 reload (슬롯 phantom 점유 방지)
+                db.ref('presence/' + key).remove()
+                    .then(() => location.reload())
+                    .catch(() => location.reload());
+            } else {
                 location.reload();
-            }).catch(showDbError);
+            }
         }
     }
 
