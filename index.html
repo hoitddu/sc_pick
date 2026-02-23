@@ -641,8 +641,9 @@
                 const used = myTeam === 'A' ? (gameState.aUsed || []) : (gameState.bUsed || []);
                 const done = myTeam === 'A' ? gameState.aDone : gameState.bDone;
                 if (!used.includes(r.id) && !done && !gameState.awaitingResult && gameState.round <= 10) {
-                    if (myTeam === 'A') gameState.aPick = r; else gameState.bPick = r;
-                    db.ref('gameState').set(gameState).catch(showDbError);
+                    // update()로 자기 팀 픽만 덮어씀 → 상대방 데이터 보호
+                    const field = myTeam === 'A' ? 'aPick' : 'bPick';
+                    db.ref('gameState').update({ [field]: r }).catch(showDbError);
                 }
             };
             grid.appendChild(d);
@@ -659,13 +660,31 @@
         if (myTeam === 'A' && !gameState.aPick) return;
         if (myTeam === 'B' && !gameState.bPick) return;
 
-        if (myTeam === 'A') gameState.aDone = true; else gameState.bDone = true;
-        if (gameState.aDone && gameState.bDone) {
-            if (!gameState.aPick || !gameState.bPick) return;
-            gameState.awaitingResult = true;
-            gameState.pendingMatch = { r: gameState.round, a: gameState.aPick, b: gameState.bPick };
-        }
-        db.ref('gameState').set(gameState).catch(showDbError);
+        // transaction()으로 원자적 처리 → 두 선택자가 동시에 확정해도 충돌 없음
+        db.ref('gameState').transaction(current => {
+            if (!current) return current;
+            if (current.awaitingResult || current.round > 10) return; // 이미 처리됨, abort
+
+            const toArr = v => Array.isArray(v) ? v : (v ? Object.values(v) : []);
+            current.aUsed = toArr(current.aUsed);
+            current.bUsed = toArr(current.bUsed);
+            current.history = toArr(current.history);
+
+            if (myTeam === 'A') {
+                if (!current.aPick) return; // 픽 없으면 abort
+                current.aDone = true;
+            } else {
+                if (!current.bPick) return; // 픽 없으면 abort
+                current.bDone = true;
+            }
+
+            // 양팀 모두 확정 시 awaitingResult 전환
+            if (current.aDone && current.bDone && current.aPick && current.bPick) {
+                current.awaitingResult = true;
+                current.pendingMatch = { r: current.round, a: current.aPick, b: current.bPick };
+            }
+            return current;
+        }).catch(showDbError);
     }
 
     function submitRoundResult(myResult) {
@@ -673,40 +692,43 @@
         if (myRole !== 'Selector' || !gameState.awaitingResult || !gameState.pendingMatch) return;
         if (myResult !== 'W' && myResult !== 'L') return;
 
-        if (!gameState.history) gameState.history = [];
-        if (!gameState.aUsed) gameState.aUsed = [];
-        if (!gameState.bUsed) gameState.bUsed = [];
+        // transaction()으로 원자적 처리 → 양 팀 동시 클릭해도 단 한 번만 기록됨
+        db.ref('gameState').transaction(current => {
+            if (!current || !current.awaitingResult || !current.pendingMatch) return; // 이미 처리됨, abort
 
-        const winner = myResult === 'W' ? myTeam : (myTeam === 'A' ? 'B' : 'A');
-        const aResult = winner === 'A' ? 'W' : 'L';
-        const bResult = winner === 'B' ? 'W' : 'L';
-        const roundNo = gameState.pendingMatch.r || gameState.round;
+            const toArr = v => Array.isArray(v) ? v : (v ? Object.values(v) : []);
+            current.history = toArr(current.history);
+            current.aUsed = toArr(current.aUsed);
+            current.bUsed = toArr(current.bUsed);
 
-        // Prevent duplicate write for same round in the same client state.
-        if (gameState.history.some(h => h.r === roundNo)) return;
+            const winner = myResult === 'W' ? myTeam : (myTeam === 'A' ? 'B' : 'A');
+            const aResult = winner === 'A' ? 'W' : 'L';
+            const bResult = winner === 'B' ? 'W' : 'L';
+            const roundNo = current.pendingMatch.r || current.round;
 
-        const roundHistory = {
-            r: roundNo,
-            a: gameState.pendingMatch.a,
-            b: gameState.pendingMatch.b,
-            winner,
-            aResult,
-            bResult
-        };
-        gameState.history.push(roundHistory);
+            if (current.history.some(h => h.r === roundNo)) return; // 이미 기록됨, abort
 
-        if (roundHistory.a && roundHistory.a.id && !gameState.aUsed.includes(roundHistory.a.id)) gameState.aUsed.push(roundHistory.a.id);
-        if (roundHistory.b && roundHistory.b.id && !gameState.bUsed.includes(roundHistory.b.id)) gameState.bUsed.push(roundHistory.b.id);
+            const roundHistory = {
+                r: roundNo,
+                a: current.pendingMatch.a,
+                b: current.pendingMatch.b,
+                winner, aResult, bResult
+            };
+            current.history.push(roundHistory);
 
-        gameState.round++;
-        gameState.aDone = false;
-        gameState.bDone = false;
-        gameState.aPick = null;
-        gameState.bPick = null;
-        gameState.awaitingResult = false;
-        gameState.pendingMatch = null;
+            if (roundHistory.a && roundHistory.a.id && !current.aUsed.includes(roundHistory.a.id)) current.aUsed.push(roundHistory.a.id);
+            if (roundHistory.b && roundHistory.b.id && !current.bUsed.includes(roundHistory.b.id)) current.bUsed.push(roundHistory.b.id);
 
-        db.ref('gameState').set(gameState).catch(showDbError);
+            current.round++;
+            current.aDone = false;
+            current.bDone = false;
+            current.aPick = null;
+            current.bPick = null;
+            current.awaitingResult = false;
+            current.pendingMatch = null;
+
+            return current;
+        }).catch(showDbError);
     }
 
     function formatTimestamp(ts) {
@@ -724,10 +746,11 @@
         return `${y}-${m}-${d}`;
     }
 
-    function saveSessionCore(savedState) {
-        // presence에서 4개 슬롯 이름 읽기
+    function saveSessionCore(savedState, freshPresence) {
+        // Firebase에서 직접 읽은 presence 우선 사용, 없으면 캐시 fallback
+        const pres = (freshPresence && Object.keys(freshPresence).length > 0) ? freshPresence : currentPresence;
         function slotName(key) {
-            const v = currentPresence[key];
+            const v = pres[key];
             return (v && typeof v === 'object' && v.name) ? v.name : null;
         }
         const aSelector = slotName('A-Selector');
@@ -800,30 +823,38 @@
         const btnSave = document.getElementById('btn-save');
         if (btnSave) btnSave.disabled = true;
 
-        db.ref('gameState').transaction(current => {
-            if (!current) return current;   // 데이터 없으면 중단
-            if (current.saved) return;      // 이미 저장됨 → abort (undefined 반환)
+        // 저장 시점의 presence를 Firebase에서 직접 읽어 정확한 플레이어 이름 보장
+        db.ref('presence').once('value').then(presSnap => {
+            const freshPresence = presSnap.val() || {};
 
-            const toArr = v => Array.isArray(v) ? v : (v ? Object.values(v) : []);
-            return Object.assign({}, current, {
-                aUsed: toArr(current.aUsed),
-                bUsed: toArr(current.bUsed),
-                history: toArr(current.history),
-                saved: true,
-                savedAt: Date.now(),
-                savedByName: myName
+            db.ref('gameState').transaction(current => {
+                if (!current) return current;   // 데이터 없으면 중단
+                if (current.saved) return;      // 이미 저장됨 → abort (undefined 반환)
+
+                const toArr = v => Array.isArray(v) ? v : (v ? Object.values(v) : []);
+                return Object.assign({}, current, {
+                    aUsed: toArr(current.aUsed),
+                    bUsed: toArr(current.bUsed),
+                    history: toArr(current.history),
+                    saved: true,
+                    savedAt: Date.now(),
+                    savedByName: myName
+                });
+            }, (err, committed, snap) => {
+                if (err) {
+                    showDbError(err);
+                    if (btnSave) btnSave.disabled = false;
+                    return;
+                }
+                if (committed) {
+                    saveSessionCore(snap.val(), freshPresence);
+                } else {
+                    alert('이미 다른 참가자가 저장했습니다.');
+                }
             });
-        }, (err, committed, snap) => {
-            if (err) {
-                showDbError(err);
-                if (btnSave) btnSave.disabled = false;
-                return;
-            }
-            if (committed) {
-                saveSessionCore(snap.val());
-            } else {
-                alert('이미 다른 참가자가 저장했습니다.');
-            }
+        }).catch(err => {
+            showDbError(err);
+            if (btnSave) btnSave.disabled = false;
         });
     }
 
