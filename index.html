@@ -530,11 +530,13 @@
             pendingMatch: safeState.pendingMatch || null,
             saved: !!safeState.saved,
             savedAt: safeState.savedAt || null,
-            savedByName: safeState.savedByName || null
+            savedByName: safeState.savedByName || null,
+            resetAt: safeState.resetAt || null
         };
     }
 
     let gameState = createInitialState();
+    let lastResetAt = null; // 입장 시점의 resetAt 스냅샷 — 변경 감지용
 
     db.ref('presence').on('value', snap => {
         const pres = snap.val() || {};
@@ -570,7 +572,19 @@
         });
     });
 
-    db.ref('gameState').on('value', snap => { if (snap.exists()) { gameState = normalizeGameState(snap.val()); updateUI(); } });
+    db.ref('gameState').on('value', snap => {
+        if (snap.exists()) {
+            const val = snap.val();
+            // 강제 초기화 감지: 게임 화면에 있는 동안 resetAt이 변경되면 전원 로비로 강제 이동
+            if (myTeam && myRole && val.resetAt && val.resetAt !== lastResetAt) {
+                teardownPresence();
+                location.reload();
+                return;
+            }
+            gameState = normalizeGameState(val);
+            updateUI();
+        }
+    });
 
     // Firebase 공식 presence 패턴:
     // 연결될 때마다 onDisconnect 먼저 등록 → 그 다음 값 쓰기
@@ -608,6 +622,7 @@
         myTeam = (teamColor === 'Blue') ? 'A' : 'B';
         myRole = role;
         const key = `${myTeam}-${role}`;
+        lastResetAt = gameState.resetAt || null; // 입장 시점 resetAt 기록
         setupPresence(key); // 연결 유지 감시 시작 (재연결 시 자동 복구)
         document.getElementById('lobby').style.display = 'none';
         document.getElementById('main-container').style.display = 'block';
@@ -1202,7 +1217,12 @@
     function handleReset(isForce) {
         if (confirm(isForce ? "시스템을 강제 초기화할까요?" : "데이터를 초기화할까요?")) {
             if (!ensureAuthReady()) return;
-            db.ref('gameState').set(createInitialState()).then(() => {
+            const newState = createInitialState();
+            if (isForce) {
+                newState.resetAt = Date.now(); // 모든 접속자에게 강제 초기화 신호 전송
+                teardownPresence(); // 자신의 presence 리스너 먼저 해제
+            }
+            db.ref('gameState').set(newState).then(() => {
                 if (isForce) db.ref('presence').remove().then(() => { location.reload(); }).catch(showDbError);
             }).catch(showDbError);
         }
