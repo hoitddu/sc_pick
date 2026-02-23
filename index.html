@@ -1219,12 +1219,20 @@
             if (!ensureAuthReady()) return;
             const newState = createInitialState();
             if (isForce) {
-                newState.resetAt = Date.now(); // 모든 접속자에게 강제 초기화 신호 전송
-                teardownPresence(); // 자신의 presence 리스너 먼저 해제
+                teardownPresence();
+                // myTeam/myRole을 미리 초기화해 gameState 리스너가 reload를 중복 실행하지 않도록 방지
+                myTeam = undefined;
+                myRole = undefined;
+                newState.resetAt = Date.now();
+                // presence 먼저 삭제 → 그 다음 gameState 업데이트 (순서 중요!)
+                // 반대로 하면 gameState 리스너가 reload를 먼저 트리거해 presence.remove()가 실행 안 될 수 있음
+                db.ref('presence').remove()
+                    .then(() => db.ref('gameState').set(newState))
+                    .then(() => location.reload())
+                    .catch(showDbError);
+            } else {
+                db.ref('gameState').set(newState).catch(showDbError);
             }
-            db.ref('gameState').set(newState).then(() => {
-                if (isForce) db.ref('presence').remove().then(() => { location.reload(); }).catch(showDbError);
-            }).catch(showDbError);
         }
     }
 
