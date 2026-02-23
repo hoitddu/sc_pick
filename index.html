@@ -450,7 +450,7 @@
     let presenceRef = null, connectedRef = null;
 
     const MEMBERS = ['수해', '성옥', '진수', '윤우', '유강', '동주'];
-    let myName = localStorage.getItem('sc2_name') || '';
+    let myName = sessionStorage.getItem('sc2_name') || '';
     let currentPresence = {};
 
     function getOccupiedNames() {
@@ -488,13 +488,13 @@
 
     function selectName(name) {
         myName = name;
-        localStorage.setItem('sc2_name', name);
+        sessionStorage.setItem('sc2_name', name);
         initNameUI();
     }
 
     function resetNameSelection() {
         myName = '';
-        localStorage.removeItem('sc2_name');
+        sessionStorage.removeItem('sc2_name');
         initNameUI();
     }
 
