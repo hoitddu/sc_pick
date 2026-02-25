@@ -23,13 +23,14 @@
             --text-dim: #a0a0a0;
         }
 
-        body { 
-            font-family: 'Pretendard', sans-serif; 
-            background-color: var(--bg-color); 
-            color: var(--text-main); 
-            margin: 0; padding: 0; 
-            display: flex; flex-direction: column; align-items: center; 
+        body {
+            font-family: 'Pretendard', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0; padding: 0;
+            display: flex; flex-direction: column; align-items: center;
             min-height: 100vh; -webkit-tap-highlight-color: transparent;
+            overscroll-behavior: none;
         }
 
         /* --- LOBBY DESIGN --- */
@@ -562,6 +563,7 @@
             const val = snap.val();
             // 강제 초기화 감지: 게임 화면에 있는 동안 resetAt이 변경되면 전원 로비로 강제 이동
             if (myTeam && myRole && val.resetAt && val.resetAt !== lastResetAt) {
+                sessionStorage.removeItem('sc2_slot');
                 teardownPresence();
                 location.reload();
                 return;
@@ -616,6 +618,7 @@
         myRole = role;
         const key = `${myTeam}-${role}`;
         lastResetAt = gameState.resetAt || null; // 입장 시점 resetAt 기록
+        sessionStorage.setItem('sc2_slot', JSON.stringify({ team: teamColor, role }));
         setupPresence(key); // 연결 유지 감시 시작 (재연결 시 자동 복구)
         document.getElementById('lobby').style.display = 'none';
         document.getElementById('main-container').style.display = 'block';
@@ -624,8 +627,19 @@
         renderGrids();
     }
 
+    // 새로고침 시 자동 복귀: 저장된 슬롯 정보가 있으면 자동 재입장
+    (function autoRejoin() {
+        const saved = sessionStorage.getItem('sc2_slot');
+        if (!saved || !myName) return;
+        try {
+            const { team, role } = JSON.parse(saved);
+            if (team && role) join(team, role);
+        } catch (e) { sessionStorage.removeItem('sc2_slot'); }
+    })();
+
     function goHome() {
         if (confirm("로비로 이동하시겠습니까?")) {
+            sessionStorage.removeItem('sc2_slot');
             teardownPresence(); // 자동 재연결 presence 감시 중단
             const key = myTeam && myRole ? `${myTeam}-${myRole}` : null;
             if (key) {
@@ -1211,6 +1225,7 @@
         if (confirm(isForce ? "시스템을 강제 초기화할까요?" : "데이터를 초기화할까요?")) {
     
             const newState = createInitialState();
+            sessionStorage.removeItem('sc2_slot');
             if (isForce) {
                 teardownPresence();
                 // myTeam/myRole을 미리 초기화해 gameState 리스너가 reload를 중복 실행하지 않도록 방지
