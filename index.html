@@ -6,7 +6,6 @@
     <title>SC2 2:2 PICK DASHBOARD</title>
     
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 
     <style>
@@ -417,24 +416,10 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
 
-    // 3. 익명 인증 실행
-    let authReady = false;
-    firebase.auth().onAuthStateChanged((user) => { authReady = !!user; });
-    firebase.auth().signInAnonymously().catch((e) => {
-        console.error("인증실패:", e.message);
-        alert(`Firebase 익명 인증 실패: ${e.message}`);
-    });
-
     function showDbError(err) {
         const msg = (err && (err.message || err.code)) ? (err.message || err.code) : '알 수 없는 오류';
         console.error('DB 작업 실패:', err);
         alert(`저장 실패: ${msg}`);
-    }
-
-    function ensureAuthReady() {
-        if (authReady && firebase.auth().currentUser) return true;
-        alert('인증이 아직 완료되지 않았습니다. 잠시 후 다시 시도해주세요.');
-        return false;
     }
 
     // --- 게임 로직 변수 및 함수 ---
@@ -612,13 +597,21 @@
         }
     }
 
+    // 화면 복귀 시 즉시 presence 재설정 (모바일 화면 꺼짐 후 복귀 대응)
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && myTeam && myRole) {
+            const key = `${myTeam}-${myRole}`;
+            setupPresence(key);
+        }
+    });
+
     function join(teamColor, role) {
         if (!myName) { alert('이름을 먼저 선택해주세요.'); return; }
         if (getOccupiedNames().includes(myName)) {
             alert(`'${myName}'은(는) 이미 다른 슬롯에서 접속 중입니다.`);
             return;
         }
-        if (!ensureAuthReady()) return;
+
         myTeam = (teamColor === 'Blue') ? 'A' : 'B';
         myRole = role;
         const key = `${myTeam}-${role}`;
@@ -652,7 +645,7 @@
             const d = document.createElement('div'); d.className = 'race-item'; d.id = `race-${r.id}`; d.innerText = r.label;
             d.onclick = () => {
                 if (myRole !== 'Selector') return;
-                if (!ensureAuthReady()) return;
+        
                 const used = myTeam === 'A' ? (gameState.aUsed || []) : (gameState.bUsed || []);
                 const done = myTeam === 'A' ? gameState.aDone : gameState.bDone;
                 if (!used.includes(r.id) && !done && !gameState.awaitingResult && gameState.round <= 10) {
@@ -670,7 +663,7 @@
     }
 
     function confirmSelection() {
-        if (!ensureAuthReady()) return;
+
         if (myRole !== 'Selector' || gameState.awaitingResult || gameState.round > 10) return;
         if (myTeam === 'A' && !gameState.aPick) return;
         if (myTeam === 'B' && !gameState.bPick) return;
@@ -703,7 +696,7 @@
     }
 
     function submitRoundResult(myResult) {
-        if (!ensureAuthReady()) return;
+
         if (myRole !== 'Selector' || !gameState.awaitingResult || !gameState.pendingMatch) return;
         if (myResult !== 'W' && myResult !== 'L') return;
 
@@ -834,7 +827,7 @@
     }
 
     function saveSession() {
-        if (!ensureAuthReady()) return;
+
         const btnSave = document.getElementById('btn-save');
         if (btnSave) btnSave.disabled = true;
 
@@ -1216,7 +1209,7 @@
 
     function handleReset(isForce) {
         if (confirm(isForce ? "시스템을 강제 초기화할까요?" : "데이터를 초기화할까요?")) {
-            if (!ensureAuthReady()) return;
+    
             const newState = createInitialState();
             if (isForce) {
                 teardownPresence();
