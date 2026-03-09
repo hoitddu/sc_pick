@@ -1079,6 +1079,31 @@
         return pts;
     }
 
+    function memberOptionsHtml(selectedName) {
+        const current = selectedName || '';
+        return [''].concat(MEMBERS).map(name => {
+            const label = name || '-';
+            const selected = name === current ? ' selected' : '';
+            return `<option value="${name}"${selected}>${label}</option>`;
+        }).join('');
+    }
+
+    function getEditedPlayers(sessionId) {
+        const players = {
+            aSelector: document.getElementById(`edit-player-aSelector-${sessionId}`).value || null,
+            aViewer:   document.getElementById(`edit-player-aViewer-${sessionId}`).value || null,
+            bSelector: document.getElementById(`edit-player-bSelector-${sessionId}`).value || null,
+            bViewer:   document.getElementById(`edit-player-bViewer-${sessionId}`).value || null
+        };
+        const picked = Object.values(players).filter(Boolean);
+        const seen = new Set();
+        for (const name of picked) {
+            if (seen.has(name)) throw new Error(`중복된 참가자가 있습니다: ${name}`);
+            seen.add(name);
+        }
+        return players;
+    }
+
     function adminLoadSessions() {
         const dateKey = document.getElementById('admin-date-input').value;
         if (!dateKey) return;
@@ -1100,6 +1125,12 @@
                         const aV = (s.players && s.players.aViewer)   || '-';
                         const bS = (s.players && s.players.bSelector) || '-';
                         const bV = (s.players && s.players.bViewer)   || '-';
+                        const playerOptions = {
+                            aSelector: memberOptionsHtml(s.players && s.players.aSelector),
+                            aViewer: memberOptionsHtml(s.players && s.players.aViewer),
+                            bSelector: memberOptionsHtml(s.players && s.players.bSelector),
+                            bViewer: memberOptionsHtml(s.players && s.players.bViewer)
+                        };
                         const bw = s.blueWins !== undefined ? s.blueWins : '?';
                         const rw = s.redWins  !== undefined ? s.redWins  : '?';
                         const timeStr = s.createdAt ? formatTimestamp(s.createdAt) : '';
@@ -1133,6 +1164,24 @@
                             </div>
                             <div class="edit-form" id="editform-${sessionId}">
                                 <div style="font-size:0.78rem;color:var(--text-dim);margin-bottom:8px;">새 점수 입력 (Blue : Red)</div>
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                                    <label style="display:flex;flex-direction:column;gap:4px;font-size:0.76rem;color:var(--blue-main);">
+                                        Blue Selector
+                                        <select id="edit-player-aSelector-${sessionId}">${playerOptions.aSelector}</select>
+                                    </label>
+                                    <label style="display:flex;flex-direction:column;gap:4px;font-size:0.76rem;color:var(--blue-main);">
+                                        Blue Viewer
+                                        <select id="edit-player-aViewer-${sessionId}">${playerOptions.aViewer}</select>
+                                    </label>
+                                    <label style="display:flex;flex-direction:column;gap:4px;font-size:0.76rem;color:var(--red-main);">
+                                        Red Selector
+                                        <select id="edit-player-bSelector-${sessionId}">${playerOptions.bSelector}</select>
+                                    </label>
+                                    <label style="display:flex;flex-direction:column;gap:4px;font-size:0.76rem;color:var(--red-main);">
+                                        Red Viewer
+                                        <select id="edit-player-bViewer-${sessionId}">${playerOptions.bViewer}</select>
+                                    </label>
+                                </div>
                                 <div style="display:flex;align-items:center;gap:8px;">
                                     <span style="color:var(--blue-main);font-size:0.8rem;">Blue</span>
                                     <input type="number" id="edit-blue-${sessionId}" value="${bw}" min="0" max="10" />
@@ -1162,12 +1211,20 @@
         if (isNaN(newBlue) || isNaN(newRed) || newBlue < 0 || newRed < 0) {
             alert('올바른 점수를 입력하세요.'); return;
         }
+        let newPlayers;
+        try {
+            newPlayers = getEditedPlayers(sessionId);
+        } catch (err) {
+            alert(err.message || err);
+            return;
+        }
         db.ref(`matches/${dateKey}/${sessionId}`).once('value').then(snap => {
             const s = snap.val();
             if (!s) { alert('세션을 찾을 수 없습니다.'); return Promise.reject('not found'); }
             const oldPts = s.sessionPoints || {};
-            const newPts = computeSessionPoints(s.players || {}, newBlue, newRed);
+            const newPts = computeSessionPoints(newPlayers, newBlue, newRed);
             return db.ref(`matches/${dateKey}/${sessionId}`).update({
+                players:       newPlayers,
                 blueWins:      newBlue,
                 redWins:       newRed,
                 diff:          Math.abs(newBlue - newRed),
