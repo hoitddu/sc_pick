@@ -391,6 +391,44 @@
             <button onclick="adminLoadSessions()"
                 style="background:#333; border:none; color:#fff; padding:8px 16px; border-radius:8px; cursor:pointer; font-size:0.85rem;">조회</button>
         </div>
+        <div class="session-card" style="margin-bottom:16px;">
+            <div class="admin-title" style="margin-bottom:12px;">수동 세션 추가</div>
+            <div style="margin-bottom:10px;">
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:0.76rem;color:var(--text-dim);">
+                    날짜
+                    <input class="admin-input" type="date" id="admin-manual-date" style="margin-bottom:0;" />
+                </label>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:0.76rem;color:var(--blue-main);">
+                    Blue Selector
+                    <select class="admin-input" id="admin-manual-aSelector" style="margin-bottom:0;"></select>
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:0.76rem;color:var(--blue-main);">
+                    Blue Viewer
+                    <select class="admin-input" id="admin-manual-aViewer" style="margin-bottom:0;"></select>
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:0.76rem;color:var(--red-main);">
+                    Red Selector
+                    <select class="admin-input" id="admin-manual-bSelector" style="margin-bottom:0;"></select>
+                </label>
+                <label style="display:flex;flex-direction:column;gap:4px;font-size:0.76rem;color:var(--red-main);">
+                    Red Viewer
+                    <select class="admin-input" id="admin-manual-bViewer" style="margin-bottom:0;"></select>
+                </label>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span style="color:var(--blue-main);font-size:0.8rem;">Blue</span>
+                <input class="admin-input" type="number" id="admin-manual-blue" min="0" max="10" inputmode="numeric"
+                    style="width:72px;margin-bottom:0;text-align:center;" />
+                <span style="font-size:0.8rem;">:</span>
+                <input class="admin-input" type="number" id="admin-manual-red" min="0" max="10" inputmode="numeric"
+                    style="width:72px;margin-bottom:0;text-align:center;" />
+                <span style="color:var(--red-main);font-size:0.8rem;">Red</span>
+                <button id="btn-admin-manual-save" onclick="adminCreateManualSession()"
+                    style="background:#f0c040;border:none;color:#111;padding:10px 16px;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;">수동 저장</button>
+            </div>
+        </div>
         <div id="admin-sessions-list">
             <div style="color:var(--text-dim);font-size:0.85rem;">날짜를 선택 후 조회하세요.</div>
         </div>
@@ -1030,6 +1068,7 @@
         const m = String(kst.getUTCMonth() + 1).padStart(2, '0');
         const d = String(kst.getUTCDate()).padStart(2, '0');
         document.getElementById('admin-date-input').value = `${y}-${m}-${d}`;
+        resetAdminManualForm(`${y}-${m}-${d}`);
         document.getElementById('admin-login-panel').style.display = isAdmin ? 'none' : 'block';
         document.getElementById('admin-panel').style.display       = isAdmin ? 'block' : 'none';
     }
@@ -1088,6 +1127,44 @@
         }).join('');
     }
 
+    function validatePlayers(players, requireAll) {
+        const picked = Object.values(players).filter(Boolean);
+        if (requireAll && picked.length !== 4) {
+            throw new Error('참가자 4명을 모두 선택하세요.');
+        }
+        const seen = new Set();
+        for (const name of picked) {
+            if (seen.has(name)) throw new Error(`중복된 참가자가 있습니다: ${name}`);
+            seen.add(name);
+        }
+    }
+
+    function resetAdminManualForm(defaultDate) {
+        ['admin-manual-aSelector', 'admin-manual-aViewer', 'admin-manual-bSelector', 'admin-manual-bViewer'].forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.innerHTML = memberOptionsHtml('');
+            el.value = '';
+        });
+        const dateInput = document.getElementById('admin-manual-date');
+        if (dateInput) dateInput.value = defaultDate || getDateKeyKST();
+        const blueInput = document.getElementById('admin-manual-blue');
+        const redInput = document.getElementById('admin-manual-red');
+        if (blueInput) blueInput.value = '';
+        if (redInput) redInput.value = '';
+    }
+
+    function getManualPlayers() {
+        const players = {
+            aSelector: document.getElementById('admin-manual-aSelector').value || null,
+            aViewer:   document.getElementById('admin-manual-aViewer').value || null,
+            bSelector: document.getElementById('admin-manual-bSelector').value || null,
+            bViewer:   document.getElementById('admin-manual-bViewer').value || null
+        };
+        validatePlayers(players, true);
+        return players;
+    }
+
     function getEditedPlayers(sessionId) {
         const players = {
             aSelector: document.getElementById(`edit-player-aSelector-${sessionId}`).value || null,
@@ -1095,12 +1172,7 @@
             bSelector: document.getElementById(`edit-player-bSelector-${sessionId}`).value || null,
             bViewer:   document.getElementById(`edit-player-bViewer-${sessionId}`).value || null
         };
-        const picked = Object.values(players).filter(Boolean);
-        const seen = new Set();
-        for (const name of picked) {
-            if (seen.has(name)) throw new Error(`중복된 참가자가 있습니다: ${name}`);
-            seen.add(name);
-        }
+        validatePlayers(players, false);
         return players;
     }
 
@@ -1248,6 +1320,76 @@
         }).catch(err => {
             if (err !== 'not found') alert(`수정 실패: ${err.message || err}`);
         });
+    }
+
+    function adminCreateManualSession() {
+        const dateKey = document.getElementById('admin-manual-date').value;
+        const blueWins = parseInt(document.getElementById('admin-manual-blue').value, 10);
+        const redWins  = parseInt(document.getElementById('admin-manual-red').value, 10);
+        if (!dateKey) { alert('날짜를 선택하세요.'); return; }
+        if (isNaN(blueWins) || isNaN(redWins) || blueWins < 0 || redWins < 0) {
+            alert('올바른 점수를 입력하세요.'); return;
+        }
+
+        let players;
+        try {
+            players = getManualPlayers();
+        } catch (err) {
+            alert(err.message || err);
+            return;
+        }
+
+        const diff = Math.abs(blueWins - redWins);
+        const winnerTeam = blueWins > redWins ? 'A' : (redWins > blueWins ? 'B' : 'draw');
+        const sessionPoints = computeSessionPoints(players, blueWins, redWins);
+        const nowKst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+        const hh = String(nowKst.getUTCHours()).padStart(2, '0');
+        const mm = String(nowKst.getUTCMinutes()).padStart(2, '0');
+        const ss = String(nowKst.getUTCSeconds()).padStart(2, '0');
+        const createdAt = new Date(`${dateKey}T${hh}:${mm}:${ss}+09:00`).getTime();
+        const sessionId = `manual_${createdAt}_${Math.random().toString(36).substr(2, 6)}`;
+        const btn = document.getElementById('btn-admin-manual-save');
+        if (btn) btn.disabled = true;
+
+        const sessionData = {
+            createdAt,
+            savedAt: createdAt,
+            savedByName: '관리자(수동)',
+            players,
+            blueWins,
+            redWins,
+            diff,
+            winnerTeam,
+            history: [],
+            sessionPoints,
+            source: 'admin-manual'
+        };
+
+        db.ref(`matches/${dateKey}/${sessionId}`).set(sessionData)
+            .then(() => {
+                if (diff === 0) return;
+                const txns = [];
+                Object.entries(sessionPoints).forEach(([name, pts]) => {
+                    if (pts === 0) return;
+                    txns.push(
+                        db.ref(`statsDaily/${dateKey}/${name}`)
+                          .transaction(cur => (cur || 0) + pts)
+                    );
+                });
+                return Promise.all(txns);
+            })
+            .then(() => {
+                alert('수동 세션 저장 완료');
+                document.getElementById('admin-date-input').value = dateKey;
+                resetAdminManualForm(dateKey);
+                adminLoadSessions();
+            })
+            .catch(err => {
+                alert(`수동 저장 실패: ${err.message || err}`);
+            })
+            .finally(() => {
+                if (btn) btn.disabled = false;
+            });
     }
 
     function adminDeleteSession(dateKey, sessionId) {
