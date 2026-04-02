@@ -527,10 +527,39 @@
         return labels.length ? labels.join(' vs ') : null;
     }
 
-    function trackMixpanelEvent(eventName, details) {
+    function getCurrentScreen() {
+        const adminScreen = document.getElementById('admin-screen');
+        const boardScreen = document.getElementById('daily-board');
+        const mainScreen = document.getElementById('main-container');
+
+        if (adminScreen && adminScreen.style.display === 'block') return 'admin';
+        if (boardScreen && boardScreen.style.display === 'block') return 'daily-board';
+        if (mainScreen && mainScreen.style.display === 'block') return 'main-game';
+        return 'lobby';
+    }
+
+    function buildTrackingContext(extraContext) {
+        const state = typeof gameState === 'undefined' ? null : gameState;
+        return Object.assign({
+            screen: getCurrentScreen(),
+            player_name: myName || null,
+            team: myTeam || null,
+            role: myRole || null,
+            round: state && typeof state.round === 'number' ? state.round : null,
+            awaiting_result: !!(state && state.awaitingResult),
+            has_pending_match: !!(state && state.pendingMatch),
+            session_saved: !!(state && state.saved)
+        }, extraContext || {});
+    }
+
+    function trackMixpanelEvent(eventName, options) {
+        const state = typeof gameState === 'undefined' ? null : gameState;
         const payload = {
-            character_name: details && Object.prototype.hasOwnProperty.call(details, 'character_name') ? details.character_name : null,
-            step_order: details && typeof details.step_order === 'number' ? details.step_order : 0,
+            action_type: options && options.actionType ? options.actionType : eventName,
+            step_index: options && typeof options.stepIndex === 'number'
+                ? options.stepIndex
+                : (state && typeof state.round === 'number' ? state.round : 0),
+            context: buildTrackingContext(options && options.context),
             timestamp: Date.now()
         };
 
@@ -600,12 +629,27 @@
         myName = name;
         sessionStorage.setItem('sc2_name', name);
         initNameUI();
+        trackMixpanelEvent('identity_selected', {
+            actionType: 'select_name',
+            stepIndex: 0,
+            context: {
+                selected_name: name,
+                occupied_name_count: getOccupiedNames().length
+            }
+        });
     }
 
     function resetNameSelection() {
         myName = '';
         sessionStorage.removeItem('sc2_name');
         initNameUI();
+        trackMixpanelEvent('identity_cleared', {
+            actionType: 'clear_name',
+            stepIndex: 0,
+            context: {
+                occupied_name_count: getOccupiedNames().length
+            }
+        });
     }
 
     initNameUI();
@@ -647,11 +691,14 @@
 
     let gameState = createInitialState();
     let lastResetAt = null; // 입장 시점의 resetAt 스냅샷, 변경 감지용
-    let lastTrackedCompleteRound = null;
+    let lastTrackedResultReadyRound = null;
 
-    trackMixpanelEvent('page_view', {
-        character_name: window.location.pathname || 'index.html',
-        step_order: 0
+    trackMixpanelEvent('screen_viewed', {
+        actionType: 'initial_load',
+        stepIndex: 0,
+        context: {
+            entry_point: window.location.pathname || 'index.html'
+        }
     });
 
     db.ref('presence').on('value', snap => {
@@ -756,6 +803,15 @@
         document.getElementById('user-tag').innerText = `${teamColor} ${role} (${myName})`;
         document.getElementById('user-tag').style.color = (teamColor === 'Blue') ? 'var(--blue-main)' : 'var(--red-main)';
         renderGrids();
+        trackMixpanelEvent('slot_joined', {
+            actionType: 'join_slot',
+            stepIndex: gameState.round,
+            context: {
+                selected_team: teamColor,
+                selected_role: role,
+                slot_key: key
+            }
+        });
     }
 
     // 새로고침 시 자동 복귀: 저장된 슬롯 정보가 있으면 자동 재입장
@@ -774,6 +830,13 @@
             sessionStorage.removeItem('sc2_slot');
             teardownPresence(); // 자동 재연결 presence 감시 중단
             const key = myTeam && myRole ? `${myTeam}-${myRole}` : null;
+            trackMixpanelEvent('slot_left', {
+                actionType: 'leave_slot',
+                stepIndex: gameState.round,
+                context: {
+                    slot_key: key
+                }
+            });
             if (key) {
                 // remove 성공/실패 무관하게 항상 reload (슬롯 phantom 점유 방지)
                 db.ref('presence/' + key).remove()
@@ -799,9 +862,14 @@
                     const field = myTeam === 'A' ? 'aPick' : 'bPick';
                     db.ref('gameState').update({ [field]: r })
                         .then(() => {
-                            trackMixpanelEvent('select_character', {
-                                character_name: getCharacterLabel(r),
-                                step_order: gameState.round
+                            trackMixpanelEvent('draft_selection_changed', {
+                                actionType: 'update_selection',
+                                stepIndex: gameState.round,
+                                context: {
+                                    selection_id: r.id,
+                                    selection_label: getCharacterLabel(r),
+                                    selection_field: field
+                                }
                             });
                         })
                         .catch(showDbError);
@@ -850,9 +918,13 @@
             return current;
         }).then(result => {
             if (result && result.committed) {
-                trackMixpanelEvent('pick_action', {
-                    character_name: selectedLabel,
-                    step_order: stepOrder
+                trackMixpanelEvent('draft_selection_confirmed', {
+                    actionType: 'confirm_selection',
+                    stepIndex: stepOrder,
+                    context: {
+                        selection_label: selectedLabel,
+                        selection_id: selectedPick && selectedPick.id ? selectedPick.id : null
+                    }
                 });
             }
         }).catch(showDbError);
@@ -864,10 +936,8 @@
         if (myResult !== 'W' && myResult !== 'L') return;
 
         const stepOrder = gameState.pendingMatch.r || gameState.round;
-        const bannedCharacters = [
-            getCharacterLabel(gameState.pendingMatch.a),
-            getCharacterLabel(gameState.pendingMatch.b)
-        ].filter(Boolean);
+        const blueSelection = getCharacterLabel(gameState.pendingMatch.a);
+        const redSelection = getCharacterLabel(gameState.pendingMatch.b);
 
         // transaction()으로 원자적 처리, 결과를 동시에 입력해도 한 번만 기록
         db.ref('gameState').transaction(current => {
@@ -907,11 +977,16 @@
             return current;
         }).then(result => {
             if (result && result.committed) {
-                bannedCharacters.forEach(characterName => {
-                    trackMixpanelEvent('ban_action', {
-                        character_name: characterName,
-                        step_order: stepOrder
-                    });
+                const winnerTeam = myResult === 'W' ? myTeam : (myTeam === 'A' ? 'B' : 'A');
+                trackMixpanelEvent('round_result_recorded', {
+                    actionType: 'submit_round_result',
+                    stepIndex: stepOrder,
+                    context: {
+                        submitted_result: myResult,
+                        winner_team: winnerTeam,
+                        blue_selection: blueSelection,
+                        red_selection: redSelection
+                    }
                 });
             }
         }).catch(showDbError);
@@ -1001,6 +1076,21 @@
                 });
                 return Promise.all(txns);
             })
+            .then(() => {
+                trackMixpanelEvent('session_saved', {
+                    actionType: 'persist_session',
+                    stepIndex: history.length,
+                    context: {
+                        date_key: dateKey,
+                        session_id: sessionId,
+                        blue_wins: blueWins,
+                        red_wins: redWins,
+                        winner_team: winnerTeam,
+                        diff,
+                        players: sessionData.players
+                    }
+                });
+            })
             .catch(showDbError);
     }
 
@@ -1051,6 +1141,13 @@
         const y = kst.getUTCFullYear();
         const m = String(kst.getUTCMonth() + 1).padStart(2, '0');
         document.getElementById('board-month-input').value = `${y}-${m}`;
+        trackMixpanelEvent('screen_viewed', {
+            actionType: 'open_daily_board',
+            stepIndex: gameState.round,
+            context: {
+                month: `${y}-${m}`
+            }
+        });
         loadBoard();
     }
 
@@ -1146,6 +1243,13 @@
         const year = yearMonth.slice(0, 4);
         const monthPfx = yearMonth + '-';
         const yearPfx  = year + '-';
+        trackMixpanelEvent('board_data_requested', {
+            actionType: 'load_board',
+            stepIndex: gameState.round,
+            context: {
+                year_month: yearMonth
+            }
+        });
 
         document.getElementById('board-month-label').innerText = `${yearMonth} 월별 점수`;
         document.getElementById('board-year-label').innerText  = `${year}년 연간 점수`;
@@ -1197,6 +1301,13 @@
         resetAdminManualForm(`${y}-${m}-${d}`);
         document.getElementById('admin-login-panel').style.display = isAdmin ? 'none' : 'block';
         document.getElementById('admin-panel').style.display       = isAdmin ? 'block' : 'none';
+        trackMixpanelEvent('screen_viewed', {
+            actionType: 'open_admin_screen',
+            stepIndex: gameState.round,
+            context: {
+                admin_authenticated: isAdmin
+            }
+        });
     }
 
     function hideAdminScreen() {
@@ -1215,6 +1326,13 @@
         document.getElementById('admin-pin').value = '';
         document.getElementById('admin-login-panel').style.display = 'none';
         document.getElementById('admin-panel').style.display = 'block';
+        trackMixpanelEvent('admin_authenticated', {
+            actionType: 'login_admin',
+            stepIndex: gameState.round,
+            context: {
+                admin_authenticated: true
+            }
+        });
         document.getElementById('admin-user-info').innerText = '관리자';
     }
 
@@ -1441,6 +1559,17 @@
                 return Promise.all(txns);
             });
         }).then(() => {
+            trackMixpanelEvent('admin_session_updated', {
+                actionType: 'edit_saved_session',
+                stepIndex: gameState.round,
+                context: {
+                    date_key: dateKey,
+                    session_id: sessionId,
+                    blue_wins: newBlue,
+                    red_wins: newRed,
+                    players: newPlayers
+                }
+            });
             alert('수정 완료');
             adminLoadSessions();
         }).catch(err => {
@@ -1505,6 +1634,17 @@
                 return Promise.all(txns);
             })
             .then(() => {
+                trackMixpanelEvent('admin_session_created', {
+                    actionType: 'create_manual_session',
+                    stepIndex: gameState.round,
+                    context: {
+                        date_key: dateKey,
+                        session_id: sessionId,
+                        blue_wins: blueWins,
+                        red_wins: redWins,
+                        players
+                    }
+                });
                 alert('수동 세션 저장 완료');
                 document.getElementById('admin-date-input').value = dateKey;
                 resetAdminManualForm(dateKey);
@@ -1537,6 +1677,14 @@
                 return Promise.all(txns);
             });
         }).then(() => {
+            trackMixpanelEvent('admin_session_deleted', {
+                actionType: 'delete_saved_session',
+                stepIndex: gameState.round,
+                context: {
+                    date_key: dateKey,
+                    session_id: sessionId
+                }
+            });
             alert('삭제 완료');
             adminLoadSessions();
         }).catch(err => {
@@ -1548,9 +1696,12 @@
 
     function handleReset(isForce) {
         if (confirm(isForce ? "시스템을 강제 초기화할까요?" : "데이터를 초기화할까요?")) {
-            trackMixpanelEvent('reset_action', {
-                character_name: isForce ? 'force_reset' : 'reset',
-                step_order: gameState.round
+            trackMixpanelEvent('session_reset', {
+                actionType: isForce ? 'force_reset' : 'reset_session',
+                stepIndex: gameState.round,
+                context: {
+                    reset_mode: isForce ? 'force' : 'standard'
+                }
             });
 
             const newState = createInitialState();
@@ -1572,12 +1723,17 @@
 
     function updateUI() {
         if (gameState.awaitingResult && gameState.pendingMatch) {
-            const completeRound = gameState.pendingMatch.r || gameState.round;
-            if (lastTrackedCompleteRound !== completeRound) {
-                lastTrackedCompleteRound = completeRound;
-                trackMixpanelEvent('complete_selection', {
-                    character_name: getMatchLabel(gameState.pendingMatch),
-                    step_order: completeRound
+            const resultReadyRound = gameState.pendingMatch.r || gameState.round;
+            if (lastTrackedResultReadyRound !== resultReadyRound) {
+                lastTrackedResultReadyRound = resultReadyRound;
+                trackMixpanelEvent('round_ready_for_result', {
+                    actionType: 'await_result_input',
+                    stepIndex: resultReadyRound,
+                    context: {
+                        pending_match: getMatchLabel(gameState.pendingMatch),
+                        blue_selection: getCharacterLabel(gameState.pendingMatch.a),
+                        red_selection: getCharacterLabel(gameState.pendingMatch.b)
+                    }
                 });
             }
         }
