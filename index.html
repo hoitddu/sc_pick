@@ -500,6 +500,7 @@
 
 <script>
     // 2. Firebase 설정 및 초기화
+    
     const firebaseConfig = {
         apiKey: "AIzaSyBAB8mvPNCmL4BHJFq9gDlYktNeA_Ql6m4",
         authDomain: "scpick-d320f.firebaseapp.com",
@@ -517,6 +518,28 @@
 
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
+    function getCharacterLabel(pick) {
+        return pick && pick.label ? pick.label : null;
+    }
+
+    function getMatchLabel(match) {
+        const labels = [getCharacterLabel(match && match.a), getCharacterLabel(match && match.b)].filter(Boolean);
+        return labels.length ? labels.join(' vs ') : null;
+    }
+
+    function trackMixpanelEvent(eventName, details) {
+        const payload = {
+            character_name: details && Object.prototype.hasOwnProperty.call(details, 'character_name') ? details.character_name : null,
+            step_order: details && typeof details.step_order === 'number' ? details.step_order : 0,
+            timestamp: Date.now()
+        };
+
+        if (window.mixpanel && typeof window.mixpanel.track === 'function') {
+            window.mixpanel.track(eventName, payload);
+        }
+
+        console.log(`[mixpanel] ${eventName}`, payload);
+    }
 
     function showDbError(err) {
         const msg = (err && (err.message || err.code)) ? (err.message || err.code) : '알 수 없는 오류';
@@ -623,7 +646,13 @@
     }
 
     let gameState = createInitialState();
-    let lastResetAt = null; // 입장 시점의 resetAt 스냅샷 — 변경 감지용
+    let lastResetAt = null; // 입장 시점의 resetAt 스냅샷, 변경 감지용
+    let lastTrackedCompleteRound = null;
+
+    trackMixpanelEvent('page_view', {
+        character_name: window.location.pathname || 'index.html',
+        step_order: 0
+    });
 
     db.ref('presence').on('value', snap => {
         const pres = snap.val() || {};
@@ -677,6 +706,7 @@
     // Firebase 공식 presence 패턴:
     // 연결될 때마다 onDisconnect 먼저 등록 → 그 다음 값 쓰기
     // 이렇게 하면 순간 끊김 후 재연결 시 자동으로 presence 복구됨
+    
     function setupPresence(key) {
         presenceRef = db.ref('presence/' + key);
         if (connectedRef) db.ref('.info/connected').off('value', connectedRef);
@@ -729,6 +759,7 @@
     }
 
     // 새로고침 시 자동 복귀: 저장된 슬롯 정보가 있으면 자동 재입장
+    
     (function autoRejoin() {
         const saved = sessionStorage.getItem('sc2_slot');
         if (!saved || !myName) return;
@@ -766,7 +797,14 @@
                 if (!used.includes(r.id) && !done && !gameState.awaitingResult && gameState.round <= 10) {
                     // update()로 자기 팀 픽만 덮어씀 → 상대방 데이터 보호
                     const field = myTeam === 'A' ? 'aPick' : 'bPick';
-                    db.ref('gameState').update({ [field]: r }).catch(showDbError);
+                    db.ref('gameState').update({ [field]: r })
+                        .then(() => {
+                            trackMixpanelEvent('select_character', {
+                                character_name: getCharacterLabel(r),
+                                step_order: gameState.round
+                            });
+                        })
+                        .catch(showDbError);
                 }
             };
             grid.appendChild(d);
@@ -783,10 +821,14 @@
         if (myTeam === 'A' && !gameState.aPick) return;
         if (myTeam === 'B' && !gameState.bPick) return;
 
-        // transaction()으로 원자적 처리 → 두 선택자가 동시에 확정해도 충돌 없음
+        const selectedPick = myTeam === 'A' ? gameState.aPick : gameState.bPick;
+        const selectedLabel = getCharacterLabel(selectedPick);
+        const stepOrder = gameState.round;
+
+        // transaction()으로 원자적 처리, 선택자가 동시에 확정해도 충돌 없음
         db.ref('gameState').transaction(current => {
             if (!current) return current;
-            if (current.awaitingResult || current.round > 10) return; // 이미 처리됨, abort
+            if (current.awaitingResult || current.round > 10) return;
 
             const toArr = v => Array.isArray(v) ? v : (v ? Object.values(v) : []);
             current.aUsed = toArr(current.aUsed);
@@ -794,19 +836,25 @@
             current.history = toArr(current.history);
 
             if (myTeam === 'A') {
-                if (!current.aPick) return; // 픽 없으면 abort
+                if (!current.aPick) return;
                 current.aDone = true;
             } else {
-                if (!current.bPick) return; // 픽 없으면 abort
+                if (!current.bPick) return;
                 current.bDone = true;
             }
 
-            // 양팀 모두 확정 시 awaitingResult 전환
             if (current.aDone && current.bDone && current.aPick && current.bPick) {
                 current.awaitingResult = true;
                 current.pendingMatch = { r: current.round, a: current.aPick, b: current.bPick };
             }
             return current;
+        }).then(result => {
+            if (result && result.committed) {
+                trackMixpanelEvent('pick_action', {
+                    character_name: selectedLabel,
+                    step_order: stepOrder
+                });
+            }
         }).catch(showDbError);
     }
 
@@ -815,9 +863,15 @@
         if (myRole !== 'Selector' || !gameState.awaitingResult || !gameState.pendingMatch) return;
         if (myResult !== 'W' && myResult !== 'L') return;
 
-        // transaction()으로 원자적 처리 → 양 팀 동시 클릭해도 단 한 번만 기록됨
+        const stepOrder = gameState.pendingMatch.r || gameState.round;
+        const bannedCharacters = [
+            getCharacterLabel(gameState.pendingMatch.a),
+            getCharacterLabel(gameState.pendingMatch.b)
+        ].filter(Boolean);
+
+        // transaction()으로 원자적 처리, 결과를 동시에 입력해도 한 번만 기록
         db.ref('gameState').transaction(current => {
-            if (!current || !current.awaitingResult || !current.pendingMatch) return; // 이미 처리됨, abort
+            if (!current || !current.awaitingResult || !current.pendingMatch) return;
 
             const toArr = v => Array.isArray(v) ? v : (v ? Object.values(v) : []);
             current.history = toArr(current.history);
@@ -829,7 +883,7 @@
             const bResult = winner === 'B' ? 'W' : 'L';
             const roundNo = current.pendingMatch.r || current.round;
 
-            if (current.history.some(h => h.r === roundNo)) return; // 이미 기록됨, abort
+            if (current.history.some(h => h.r === roundNo)) return;
 
             const roundHistory = {
                 r: roundNo,
@@ -851,6 +905,15 @@
             current.pendingMatch = null;
 
             return current;
+        }).then(result => {
+            if (result && result.committed) {
+                bannedCharacters.forEach(characterName => {
+                    trackMixpanelEvent('ban_action', {
+                        character_name: characterName,
+                        step_order: stepOrder
+                    });
+                });
+            }
         }).catch(showDbError);
     }
 
@@ -1485,17 +1548,18 @@
 
     function handleReset(isForce) {
         if (confirm(isForce ? "시스템을 강제 초기화할까요?" : "데이터를 초기화할까요?")) {
-    
+            trackMixpanelEvent('reset_action', {
+                character_name: isForce ? 'force_reset' : 'reset',
+                step_order: gameState.round
+            });
+
             const newState = createInitialState();
             sessionStorage.removeItem('sc2_slot');
             if (isForce) {
                 teardownPresence();
-                // myTeam/myRole을 미리 초기화해 gameState 리스너가 reload를 중복 실행하지 않도록 방지
                 myTeam = undefined;
                 myRole = undefined;
                 newState.resetAt = Date.now();
-                // presence 먼저 삭제 → 그 다음 gameState 업데이트 (순서 중요!)
-                // 반대로 하면 gameState 리스너가 reload를 먼저 트리거해 presence.remove()가 실행 안 될 수 있음
                 db.ref('presence').remove()
                     .then(() => db.ref('gameState').set(newState))
                     .then(() => location.reload())
@@ -1507,6 +1571,17 @@
     }
 
     function updateUI() {
+        if (gameState.awaitingResult && gameState.pendingMatch) {
+            const completeRound = gameState.pendingMatch.r || gameState.round;
+            if (lastTrackedCompleteRound !== completeRound) {
+                lastTrackedCompleteRound = completeRound;
+                trackMixpanelEvent('complete_selection', {
+                    character_name: getMatchLabel(gameState.pendingMatch),
+                    step_order: completeRound
+                });
+            }
+        }
+
         document.getElementById('round-title').innerText = gameState.round > 10 ? "Draft Ended" : `ROUND ${gameState.round} / 10`;
         const myDone = myTeam === 'A' ? gameState.aDone : gameState.bDone;
         const myPick = myTeam === 'A' ? gameState.aPick : gameState.bPick;
